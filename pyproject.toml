@@ -1,0 +1,13 @@
+[project]
+name = "kelp"
+version = "0.1.0"
+description = "Program repair via tree diffusion."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "marin-core>=0.2.46.dev202607131620",
+    "marin-levanter>=0.2.46.dev202607131620",
+]
+
+[project.optional-dependencies]
+tpu = ["marin-core[tpu]; sys_platform == 'linux'"]
