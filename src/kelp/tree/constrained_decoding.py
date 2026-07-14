@@ -37,7 +37,7 @@ import ast
 import logging
 
 import jax.numpy as jnp
-from jaxtyping import Float, Array
+from jaxtyping import Array, Float
 
 from kelp.tree.mutation import Mutation
 from kelp.tree.tokenizer import TreeDiffusionTokenizer
@@ -75,7 +75,7 @@ def brackets_balanced(text: str) -> bool:
     in_string = False
     string_char = ""
 
-    for i, ch in enumerate(text):
+    for _i, ch in enumerate(text):
         # Simple string detection (doesn't handle triple-quotes or escapes
         # perfectly, but good enough for bracket balancing).
         if ch in ('"', "'") and not in_string:

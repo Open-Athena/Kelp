@@ -153,9 +153,9 @@ def test_augment_bank_only_adds_expression_types(bank):
     augmented, _ = augment_bank_with_egraph(bank)
 
     for node_type, count in original_non_expr.items():
-        assert (
-            len(augmented.entries.get(node_type, [])) == count
-        ), f"Non-expression type {node_type} should not gain entries"
+        assert len(augmented.entries.get(node_type, [])) == count, (
+            f"Non-expression type {node_type} should not gain entries"
+        )
 
 
 def test_augment_bank_all_entries_valid_python(bank):

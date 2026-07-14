@@ -364,7 +364,7 @@ def beam_search(
         if not beam:
             break
 
-        logger.debug(f"Beam search depth={depth}: {len(beam)} candidates, " f"best_score={beam[0].score:.4f}")
+        logger.debug(f"Beam search depth={depth}: {len(beam)} candidates, best_score={beam[0].score:.4f}")
 
         # Early stopping: if no new edits were applied, all candidates are stale.
         all_unchanged = all(c.depth <= depth for c in beam)
@@ -412,7 +412,7 @@ def best_of_n(
         candidate = BeamCandidate(source=source, score=0.0, depth=0, edits=())
         rollout_key = rollout_keys[i]
 
-        for step in range(max_depth):
+        for _step in range(max_depth):
             rollout_key, step_key = jax.random.split(rollout_key)
 
             mutation, log_prob = generate_edit(

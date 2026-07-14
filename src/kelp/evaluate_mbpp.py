@@ -68,7 +68,7 @@ def load_mbpp_eval_tasks(max_length: int = 512, max_tasks: int = 0) -> list[dict
     """
     from datasets import load_dataset
 
-    tasks = []
+    tasks: list[dict] = []
     for split in ["train", "validation", "test", "prompt"]:
         try:
             ds = load_dataset("google-research-datasets/mbpp", "full", split=split, trust_remote_code=True)

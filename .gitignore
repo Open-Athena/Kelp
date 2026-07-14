@@ -21,5 +21,7 @@ checkpoints/
 *.log
 wandb/
 
-# Agent issue trackers
+# Agent stuff
 .chainlink/
+.claude
+.mcp.json

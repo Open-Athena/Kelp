@@ -31,7 +31,7 @@ Requires: pip install egglog
 import ast
 import logging
 
-from egglog import EGraph, Expr, StringLike, rewrite, birewrite, vars_
+from egglog import EGraph, Expr, StringLike, birewrite, rewrite, vars_
 
 from kelp.tree.subtree_bank import (
     EXPRESSION_TYPES,
@@ -142,7 +142,7 @@ def _register_rules(egraph: EGraph) -> None:
         birewrite(PyExpr.lt(a, b)).to(PyExpr.gt(b, a)),
         birewrite(PyExpr.lte(a, b)).to(PyExpr.gte(b, a)),
         # Double negation
-        rewrite(-(-a)).to(a),
+        rewrite(-(-a)).to(a),  # noqa: B002 -- egglog DSL: builds a nested unary-negation PyExpr, not Python decrement
         rewrite(PyExpr.not_(PyExpr.not_(a))).to(a),
         # Unary add is identity
         rewrite(PyExpr.uadd(a)).to(a),
@@ -370,7 +370,7 @@ def _parse_pyexpr_repr(s: str) -> str | None:
         if s.startswith(prefix) and s.endswith(")"):
             inner = s[len(prefix) : -1]
             left_str, right_str = _split_args(inner)
-            if left_str is None:
+            if left_str is None or right_str is None:
                 return None
             left = _parse_pyexpr_repr(left_str)
             right = _parse_pyexpr_repr(right_str)
@@ -379,10 +379,9 @@ def _parse_pyexpr_repr(s: str) -> str | None:
             return f"({left}) {py_op} ({right})" if py_op in ("and", "or") else f"{left} {py_op} {right}"
 
     # Infix operators: (expr) op (expr) — e.g., PyExpr.var("a") + PyExpr.var("b")
-    for op_name, py_op in [("__add__", "+"), ("__sub__", "-"), ("__mul__", "*")]:
-        # Find the operator between balanced parenthesized expressions
-        op_str = f" {op_name.strip('_')} " if op_name.startswith("__") else None
+    for _op_name, _py_op in [("__add__", "+"), ("__sub__", "-"), ("__mul__", "*")]:
         # egglog uses Python operators, so repr shows: expr + expr, expr - expr, etc.
+        # Find the operator between balanced parenthesized expressions.
         for delim in [" + ", " - ", " * "]:
             idx = _find_toplevel_operator(s, delim)
             if idx is not None:

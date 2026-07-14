@@ -64,7 +64,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-
 def normalize_whitespace(source: str) -> str:
     """Normalize whitespace for fuzzy matching.
 
@@ -107,7 +106,10 @@ def evaluate_corpus_program(
         key, search_key = jax.random.split(key)
 
         corrupted, _mutations = corrupt_program(
-            clean, num_steps=corruption_steps, bank=bank, rng=rng,
+            clean,
+            num_steps=corruption_steps,
+            bank=bank,
+            rng=rng,
         )
         if corrupted == clean:
             continue
@@ -173,19 +175,23 @@ def evaluate_corpus_program(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Evaluate Kelp on held-out corpus programs"
-    )
+    parser = argparse.ArgumentParser(description="Evaluate Kelp on held-out corpus programs")
     parser.add_argument(
-        "--checkpoint-dir", type=str, default="checkpoints/kelp-edit",
+        "--checkpoint-dir",
+        type=str,
+        default="checkpoints/kelp-edit",
         help="Directory containing step-XXXXXX subdirectories",
     )
     parser.add_argument(
-        "--checkpoint", type=str, default=None,
+        "--checkpoint",
+        type=str,
+        default=None,
         help="Specific checkpoint subdirectory (e.g., step-012000)",
     )
     parser.add_argument(
-        "--corpus-file", type=str, required=True,
+        "--corpus-file",
+        type=str,
+        required=True,
         help="Training corpus file to sample eval programs from",
     )
     parser.add_argument("--num-tasks", type=int, default=50, help="Number of programs to evaluate")

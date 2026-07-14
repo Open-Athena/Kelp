@@ -13,6 +13,9 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest",
+    "ruff",
+    "mypy",
+    "pre-commit",
 ]
 
 [build-system]
@@ -25,3 +28,43 @@ packages = ["src/kelp"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = [".claude", "checkpoints", "wandb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# F722/F821: jaxtyping shape annotations (e.g. Float[Array, "B S D"]) read as
+# forward-reference syntax errors / undefined names by ruff.
+ignore = ["F722", "F821"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/kelp"]
+# Third-party numerical/ML deps (jax, egglog, levanter, wandb, ...) ship no stubs.
+ignore_missing_imports = true
+# Pragmatic baseline for a research codebase; tighten over time.
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+# egglog PyExpr declares its DSL methods with `...` bodies; the egglog metaclass
+# supplies the implementations, so mypy's empty-body check is a false positive.
+[[tool.mypy.overrides]]
+module = "kelp.tree.egraph_augmentation"
+disable_error_code = ["empty-body"]
+
+# ast node constructors (FunctionDef, BinOp operators, ...) have strict stdlib
+# overloads that don't match the dynamic tree rewriting done here.
+[[tool.mypy.overrides]]
+module = "kelp.tree.augmentation"
+disable_error_code = ["call-overload", "assignment", "misc"]
+
+# _edit_weight_decay_mask reuses the params PyTree with bool leaves as an optax
+# weight-decay mask; the dataclass fields are typed Array by design.
+[[tool.mypy.overrides]]
+module = "kelp.tree.train"
+disable_error_code = ["arg-type"]

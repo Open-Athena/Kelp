@@ -19,7 +19,6 @@
 
 import ast
 
-
 from kelp.tree.tree_diff import (
     Edit,
     find_path,

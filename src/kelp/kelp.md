@@ -34,5 +34,3 @@ Tree diffusion should restrict the search space for generating programs based on
 6. Scale up the data and training pipeline that it can work on larger models and datasets. Specifically, create a Marin dataset pipeline that integrates with the Stack-Edu Python dataset. While it would be nice if it could run on my laptop, it should primarily be designed to run on a TPU cluster via the normal Marin framework.
 7. At this point, please review the entirety of the kelp experiment and look for opportunities to improve it. The codebase should be low complexity and follow Marin project conventions. Look to the grugformer for inspiration (see https://github.com/marin-community/marin/pull/2171, `experiments/speedrun/grugformer_starter/grugformer_speedrun.py`; `.agents/projects/grugformer.md`; and `lib/levanter/src/levanter/grug`, https://grugbrain.dev/).
 8. Add a module to perform the AR to Tree Diffusion transfer. This transfer module be configurable from the main training script (`train.py`) and backwards compatible with training a model from scratch. The transfer should adapt the `deeper_starling_path` 8b Marin model.
-
-

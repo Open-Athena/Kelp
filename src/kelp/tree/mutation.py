@@ -94,11 +94,11 @@ def _node_source_span(source: str, node: ast.AST) -> tuple[int, int] | None:
     """
     if not hasattr(node, "lineno") or not hasattr(node, "end_lineno"):
         return None
-    if node.end_lineno is None or node.end_col_offset is None:
+    if node.end_lineno is None or node.end_col_offset is None:  # type: ignore[attr-defined]  # position attrs guarded by hasattr above
         return None
 
-    start = _linecol_to_offset(source, node.lineno, node.col_offset)
-    end = _linecol_to_offset(source, node.end_lineno, node.end_col_offset)
+    start = _linecol_to_offset(source, node.lineno, node.col_offset)  # type: ignore[attr-defined]
+    end = _linecol_to_offset(source, node.end_lineno, node.end_col_offset)  # type: ignore[attr-defined]
     return (start, end)
 
 

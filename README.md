@@ -397,14 +397,16 @@ bash src/kelp/infra/launch_v7.sh --wandb
 
 ### Development
 
-All code lives under `src/kelp/` with tests in `tests/kelp/`. Follow [Marin's contribution guidelines](../../CONTRIBUTING.md).
+All code lives under `src/kelp/` with tests in `tests/kelp/`. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor guide.
 
 ```bash
 # Run kelp tests
 JAX_PLATFORMS=cpu uv run pytest tests/kelp/ -x -q
 
-# Run pre-commit checks
-./infra/pre-commit.py --all-files
+# Code health (ruff + mypy + file hygiene) via pre-commit
+uvx pre-commit run --all-files
+uvx pre-commit install   # run automatically on every commit
 ```
 
 ## References
@@ -414,3 +416,14 @@ JAX_PLATFORMS=cpu uv run pytest tests/kelp/ -x -q
 - [HumanEval (Chen et al., 2021)](https://arxiv.org/abs/2107.03374) — OpenAI's code generation benchmark
 - [egglog](https://egglog-python.readthedocs.io/) — Equality saturation for rewrite-based optimization
 - [Marin](https://marin.community/) — Open research infrastructure for LLM development
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests,
+and PR conventions, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+## License
+
+Kelp is licensed under the [Apache License 2.0](LICENSE). It was originally
+extracted from the [Marin](https://github.com/marin-community/marin) project;
+see [NOTICE](NOTICE) for attribution.

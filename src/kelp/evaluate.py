@@ -35,6 +35,7 @@ import random
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 import jax
 
@@ -124,7 +125,7 @@ EVAL_TASKS = [
     {
         "name": "clamp",
         "clean": (
-            "def clamp(x, lo, hi):\n    if x < lo:\n        return lo\n    if x > hi:\n        return hi\n    return x\n"
+            "def clamp(x, lo, hi):\n    if x < lo:\n        return lo\n    if x > hi:\n        return hi\n    return x\n"  # noqa: E501 -- literal program sample
         ),
         "tests": [
             ("clamp(5, 1, 10)", "5"),
@@ -317,7 +318,7 @@ def main():
         logger.info(f"Building subtree bank from training corpus: {len(corpus)} programs")
         bank = SubtreeBank.from_corpus(corpus)
     else:
-        eval_programs = [t["clean"] for t in EVAL_TASKS]
+        eval_programs = [cast(str, t["clean"]) for t in EVAL_TASKS]
         logger.info("Building subtree bank from eval programs only (pass --corpus-file for better corruption)")
         bank = SubtreeBank.from_corpus(eval_programs)
     logger.info(f"Subtree bank: {bank.total_entries} entries across {len(bank.entries)} node types")
