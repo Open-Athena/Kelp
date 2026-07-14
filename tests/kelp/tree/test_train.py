@@ -86,6 +86,7 @@ def train_cfg(model_cfg):
         batch_size=2,
         warmup_steps=1,
         log_interval=1,
+        wandb_project=None,  # skip W&B: no network/login in tests
     )
 
 
