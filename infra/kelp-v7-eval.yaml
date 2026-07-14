@@ -12,7 +12,7 @@
 name: kelp-v7-eval
 
 resources:
-  accelerators: {A10:1, A100:1, H100:1, A100:8, GH200:1}
+  accelerators: {"A10:1", "A100:1", "H100:1", "A100:8", "GH200:1"}
   disk_size: 100
   cloud: lambda
 
