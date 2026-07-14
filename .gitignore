@@ -20,3 +20,6 @@ corpus*.txt
 checkpoints/
 *.log
 wandb/
+
+# Agent issue trackers
+.chainlink/
