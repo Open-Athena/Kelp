@@ -68,7 +68,7 @@ uv run mypy                # type-check src/kelp
    rebasing, we recommend force pushing with lease: `git push --force-with-lease`.
    Please keep tidy commit histories when possible.
 5. Open a **pull request** against `main` with a clear description of the *what*
-   and *why*. Link any related issue. We merge into main via squash & merge to 
+   and *why*. Link any related issue. We merge into main via squash & merge to
    help keep commit histories tidy.
 
 ## Issue tracking
@@ -78,7 +78,7 @@ issue tracker (`.chainlink/`), in addition to GitHub Issues. External
 contributors should file **GitHub Issues** — that's the canonical place for
 public discussion. Use the issue templates where they fit.
 
-If you opt in to using chainlink for your development, let a maintainer know -- it 
+If you opt in to using chainlink for your development, let a maintainer know -- it
 might mean it's time to adopt [crosslink](https://github.com/forecast-bio/crosslink).
 
 ## Scope & style
