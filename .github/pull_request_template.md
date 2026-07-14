@@ -9,7 +9,7 @@ The motivation or the issue this addresses (link it: `Closes #NN`).
 ## How it was tested
 
 - [ ] `uvx pre-commit run --all-files ` passes
-- [ ] `uv run pytest tests/kelp/ -q` passes
+- [ ] `uv run pytest tests/kelp/` passes
 - [ ] Added/updated tests for the new behavior
 
 ## Notes
