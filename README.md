@@ -232,43 +232,63 @@ The prompt (typically a docstring) tells the model what the function should do, 
 
 ## Project Structure
 
+The package is layered so the pipeline reads top to bottom — representation →
+model → inference → training — with the command-line entry points kept separate
+from the library. `import kelp` re-exports the primary public API (see
+`src/kelp/__init__.py`).
+
 ```
-src/kelp/
-├── README.md                 # This file
-├── CHANGELOG.md              # Detailed change history
-├── DIAGNOSTIC_REPORT.md      # Analysis of v3 failure modes
-├── kelp.md                   # Original research proposal
-├── train.py                  # Training CLI (presets, W&B, prompt conditioning)
-├── evaluate.py               # Eval on hand-crafted tasks
-├── evaluate_corpus.py        # Held-out corpus repair evaluation
-├── evaluate_mbpp.py          # MBPP benchmark evaluation
-├── prepare_corpus.py         # Corpus preparation (multi-source + Stack Edu)
-├── corpus.py                 # Corpus loading, docstring extraction
-├── checkpointing.py          # Checkpoint save/load
-├── infra/
-│   ├── kelp-v7-train.yaml    # SkyPilot training task (Lambda/GCP)
-│   ├── kelp-v7-eval.yaml     # SkyPilot eval task
-│   └── launch_v7.sh          # End-to-end orchestrator (train → eval → download)
-├── model/
-│   ├── config.py             # TreeDiffusionConfig (includes prompt_tokens flag)
-│   ├── presets.py            # Hardware-specific presets
-│   └── model.py              # Transformer model (Grug blocks)
-├── tree/
-│   ├── train.py              # Training loop (corruption → TreeDiff → loss)
-│   ├── mutation.py           # AST corruption (forward process)
-│   ├── tree_diff.py          # Edit path computation
-│   ├── beam_search.py        # Inference (best-of-N, beam search, prompt support)
-│   ├── subtree_bank.py       # SubtreeBank indexing
-│   ├── augmentation.py       # Bank augmentation orchestrator
-│   ├── egraph_augmentation.py # E-graph variant generation (egglog)
-│   ├── reranking.py          # Execution-guided reranking
-│   ├── tokenizer.py          # AST edit tokenizer (prompt prefix encoding)
-│   └── constrained_decoding.py # Grammar-constrained generation
-└── training/
-    └── optimizer.py          # Levanter AdamConfig integration
+kelp/
+├── src/kelp/
+│   ├── __init__.py            # Curated public API (SubtreeBank, forward, best_of_n, ...)
+│   ├── corpus.py              # Corpus loading, docstring extraction
+│   ├── eval_tasks.py          # Hand-written eval tasks + derived decontamination signatures
+│   ├── tree/                  # AST representation & the corruption (forward) process
+│   │   ├── subtree_bank.py    # SubtreeBank indexing
+│   │   ├── mutation.py        # AST corruption (subtree replacement)
+│   │   ├── tree_diff.py       # Minimal edit-path computation
+│   │   ├── tokenizer.py       # AST edit tokenizer (prompt-prefix encoding)
+│   │   ├── augmentation.py    # Bank augmentation orchestrator
+│   │   ├── egraph_augmentation.py  # E-graph variant generation (egglog)
+│   │   └── ast_positions.py   # Shared AST position/offset helpers
+│   ├── model/                 # Architecture & checkpoints
+│   │   ├── config.py          # EditModelConfig (includes prompt_tokens flag)
+│   │   ├── layers.py          # Shared transformer primitives (rms_norm, swiglu_mlp, params)
+│   │   ├── edit_model.py      # The assembled causal edit-prediction transformer (Grug blocks)
+│   │   └── checkpointing.py   # Checkpoint save/load
+│   ├── inference/             # Iterative repair (the reverse process)
+│   │   ├── beam_search.py     # best-of-N, beam search, prompt support
+│   │   ├── reranking.py       # Execution-guided reranking
+│   │   └── constrained_decoding.py  # Bracket-constrained generation
+│   ├── training/              # Training engine + presets
+│   │   ├── engine.py          # Training loop (corruption → TreeDiff → loss)
+│   │   └── presets.py         # Hardware/size presets + cluster resources
+│   └── cli/                   # Command-line entry points (python -m kelp.cli.<x> / console scripts)
+│       ├── train.py           # Training CLI (presets, W&B, prompt conditioning)
+│       ├── evaluate.py        # Eval on hand-crafted tasks
+│       ├── evaluate_corpus.py # Held-out corpus repair evaluation
+│       ├── evaluate_mbpp.py   # MBPP benchmark evaluation
+│       └── prepare_corpus.py  # Corpus preparation (multi-source + Stack Edu)
+├── tests/kelp/               # Mirrors the src layout (tree/, model/, inference/, training/)
+├── infra/                    # SkyPilot configs + launch_v7.sh (train → eval → download)
+├── scripts/                  # train_v7.sh and other helper scripts
+└── docs/
+    ├── kelp.md               # Original research proposal
+    └── DIAGNOSTIC_REPORT.md   # Analysis of v3 failure modes
 ```
 
 ## Usage
+
+The commands below use `python -m kelp.cli.<name>`; installing the package also
+provides equivalent console scripts (`kelp-train`, `kelp-evaluate`,
+`kelp-evaluate-corpus`, `kelp-evaluate-mbpp`, `kelp-prepare-corpus`).
+
+As a library, `import kelp` re-exports the primary API across the pipeline —
+representation (`SubtreeBank`, `corrupt_program`, `tree_diff`, `EditTokenizer`),
+model (`EditModelConfig`, `init_edit_params`, `forward`, `load_checkpoint`),
+inference (`best_of_n`, `beam_search`, `rerank_candidates`), and training
+(`EditTrainingConfig`, `train_edit_model`). Reach into the layered subpackages
+(`kelp.tree`, `kelp.model`, `kelp.inference`, `kelp.training`) for anything else.
 
 ### Prepare a corpus
 
@@ -333,13 +353,13 @@ sky down kelp-v7 -y
 
 ## Roadmap & Contributing
 
-Kelp is an open experiment within the [Marin project](https://marin.community/). Contributions are welcome — here's what's ahead and how to help.
+Kelp is an open research project, originally incubated within the [Marin project](https://marin.community/) and now developed as a standalone repository. Contributions are welcome — here's what's ahead and how to help.
 
 ### Roadmap
 
 **Near-term (validating prompt conditioning):**
 - Analyze v7 results to measure the impact of prompt conditioning on exact match and test pass rates
-- Improve edit position prediction accuracy — the model often picks the right replacement but the wrong location (see `tree/beam_search.py`)
+- Improve edit position prediction accuracy — the model often picks the right replacement but the wrong location (see `inference/beam_search.py`)
 - Fix whitespace accumulation in corruption/repair cycles that causes spurious indentation diffs (see `tree/mutation.py`)
 - Experiment with `p_prompt` values — currently 0.5, higher values may improve conditioned repair at the cost of unconditioned generalization
 
@@ -350,7 +370,7 @@ Kelp is an open experiment within the [Marin project](https://marin.community/).
 - Implement MBPP pass@k metrics for direct comparison with code generation baselines
 
 **Long-term (transfer learning & scale):**
-- Transfer from Marin's pretrained 8B model into a tree diffusion model (the original vision from [kelp.md](kelp.md))
+- Transfer from Marin's pretrained 8B model into a tree diffusion model (the original vision from [kelp.md](docs/kelp.md))
 - Support multi-language tree diffusion (TypeScript, Rust) by swapping the AST parser
 - Condition on richer prompts (test cases, type signatures, natural language specs)
 - Scale to TPU pods using Marin's Ray-based executor infrastructure
@@ -361,7 +381,7 @@ Kelp is an open experiment within the [Marin project](https://marin.community/).
 
 ```bash
 # 1. Set up the environment
-git clone https://github.com/marin-community/marin && cd marin
+git clone https://github.com/Open-Athena/kelp && cd kelp
 uv sync
 
 # 2. Prepare a corpus (streams Stack Edu, ~5 minutes)
@@ -384,9 +404,9 @@ JAX_PLATFORMS=cpu uv run python -m kelp.cli.evaluate_corpus \
 **Pick up a known issue.** Some concrete improvements we know are needed:
 
 - **Whitespace fix** — corruption/repair cycles accumulate extra indentation; small, well-scoped bug in `tree/mutation.py`
-- **Edit position accuracy** — the model often predicts a valid replacement but applies it at the wrong AST location; see `tree/beam_search.py`
-- **New corpus sources** — write a function that returns `list[str]` of Python programs, plug it into `prepare_corpus.py`. Dedup and decontamination are automatic.
-- **New augmentation strategies** — add a new source to `augmentation.py`'s `augment_bank()` pipeline; e-graph augmentation (`tree/egraph_augmentation.py`) is a good example.
+- **Edit position accuracy** — the model often predicts a valid replacement but applies it at the wrong AST location; see `inference/beam_search.py`
+- **New corpus sources** — write a function that returns `list[str]` of Python programs, plug it into `cli/prepare_corpus.py`. Dedup and decontamination are automatic.
+- **New augmentation strategies** — add a new source to `tree/augmentation.py`'s `augment_bank()` pipeline; e-graph augmentation (`tree/egraph_augmentation.py`) is a good example.
 
 **Run on a GPU.** The SkyPilot configs in `infra/` make cloud training easy. If you have Lambda, GCP, or AWS credits:
 
