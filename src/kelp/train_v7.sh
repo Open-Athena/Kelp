@@ -11,14 +11,14 @@
 #
 # Usage:
 #   # Full pipeline (prepare + train):
-#   bash experiments/kelp/train_v7.sh
+#   bash src/kelp/train_v7.sh
 #
 #   # Skip corpus prep if already done:
-#   bash experiments/kelp/train_v7.sh --skip-prep
+#   bash src/kelp/train_v7.sh --skip-prep
 
 set -euo pipefail
 
-CORPUS_FILE="experiments/kelp/corpus_v7.txt"
+CORPUS_FILE="corpus_v7.txt"
 OUTPUT_DIR="checkpoints/kelp-edit-v7"
 STACK_EDU_MAX=50000
 MAX_LENGTH=512
@@ -39,7 +39,7 @@ done
 # Phase 1: Prepare corpus with Stack Edu.
 if [ "$SKIP_PREP" = false ]; then
     echo "=== Phase 1: Preparing corpus with Stack Edu ==="
-    uv run python experiments/kelp/prepare_corpus.py \
+    uv run python -m kelp.prepare_corpus \
         --output "$CORPUS_FILE" \
         --max-length "$MAX_LENGTH" \
         --stack-edu-max "$STACK_EDU_MAX" \
@@ -49,7 +49,7 @@ fi
 
 # Phase 2: Train with prompt conditioning.
 echo "=== Phase 2: Training v7 (overnight_cpu model on GPU, prompt conditioning) ==="
-uv run python experiments/kelp/train.py \
+uv run python -m kelp.train \
     --preset overnight_cpu \
     --corpus-file "$CORPUS_FILE" \
     --steps "$STEPS" \

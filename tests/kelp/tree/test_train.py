@@ -23,11 +23,11 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.tree.edit_model import EditModelParams, init_edit_params
-from experiments.kelp.tree.subtree_bank import SubtreeBank
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
-from experiments.kelp.tree.train import (
+from kelp.model.config import TreeDiffusionConfig
+from kelp.tree.edit_model import EditModelParams, init_edit_params
+from kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.train import (
     EditTrainingConfig,
     EditTrainingState,
     _edit_weight_decay_mask,

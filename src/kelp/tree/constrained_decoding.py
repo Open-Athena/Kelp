@@ -39,8 +39,8 @@ import logging
 import jax.numpy as jnp
 from jaxtyping import Float, Array
 
-from experiments.kelp.tree.mutation import Mutation
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.mutation import Mutation
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
 
 logger = logging.getLogger(__name__)
 

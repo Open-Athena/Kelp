@@ -32,8 +32,8 @@ import jax
 import jax.numpy as jnp
 from levanter.grug.attention import RotaryConfig
 
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.tree.edit_model import EditModelParams
+from kelp.model.config import TreeDiffusionConfig
+from kelp.tree.edit_model import EditModelParams
 
 logger = logging.getLogger(__name__)
 

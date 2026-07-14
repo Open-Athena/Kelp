@@ -22,7 +22,7 @@ Tree diffusion should restrict the search space for generating programs based on
 - In our data preparation for training, we won't need to filter out complex programs like the UC Berkeley research project did. The reason is that our ultimate model will make use of a pre-trained LLM, and thus should be able to handle complex challenges.
 - We will evaluate on Google Research's MBPP dataset and evaluation. See `experiments/eval_datasets.py:311` for accessing the eval dataset. Ideally, we should be able to add OpenAI's HumanEval evaluation in few ideal lines of code (see how that is configured in this file).
 - We will build this experiment iteratively. Thus, we need to pursue fast iteration cycles (running on CPU/a laptop; creating models from scratch before transfer learning). To develop iteratively, we should look for ways to verify correctness from experience (such as eval metrics, training logs, simulation tests). From this kind of feedback and critical self-review, we should strive to improve the codebase early and often.
-- All experiment sources should live in this experiments/kelp directory (and tests, in the commensurate folder in tests/).
+- All experiment sources should live in this src/kelp directory (and tests, in the commensurate folder in tests/).
 
 ## Plan
 

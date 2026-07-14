@@ -4,10 +4,10 @@
 # ~/sky_workdir/checkpoints/kelp-edit-v7/ (synced from the training task).
 #
 # Launch (on the same cluster as training, to reuse checkpoints):
-#   sky exec kelp-v7 experiments/kelp/infra/kelp-v7-eval.yaml
+#   sky exec kelp-v7 src/kelp/infra/kelp-v7-eval.yaml
 #
 # Or launch standalone (after rsync'ing checkpoints):
-#   sky launch -c kelp-v7-eval experiments/kelp/infra/kelp-v7-eval.yaml -y
+#   sky launch -c kelp-v7-eval src/kelp/infra/kelp-v7-eval.yaml -y
 
 name: kelp-v7-eval
 
@@ -40,7 +40,7 @@ run: |
   cd ~/sky_workdir
 
   CKPT_DIR="checkpoints/kelp-edit-v7"
-  CORPUS_FILE="experiments/kelp/corpus_v7.txt"
+  CORPUS_FILE="corpus_v7.txt"
   LOG_FILE="${CKPT_DIR}/eval.log"
 
   # Find the latest checkpoint.
@@ -54,7 +54,7 @@ run: |
   echo "" | tee -a "$LOG_FILE"
   echo "=== Corpus Evaluation ===" | tee -a "$LOG_FILE"
 
-  uv run python experiments/kelp/evaluate_corpus.py \
+  uv run python -m kelp.evaluate_corpus \
       --checkpoint-dir "$CKPT_DIR" \
       --checkpoint "$LATEST_CKPT" \
       --corpus-file "$CORPUS_FILE" \
@@ -68,7 +68,7 @@ run: |
   echo "" | tee -a "$LOG_FILE"
   echo "=== MBPP Evaluation ===" | tee -a "$LOG_FILE"
 
-  uv run python experiments/kelp/evaluate_mbpp.py \
+  uv run python -m kelp.evaluate_mbpp \
       --checkpoint-dir "$CKPT_DIR" \
       --checkpoint "$LATEST_CKPT" \
       --corpus-file "$CORPUS_FILE" \

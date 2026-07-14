@@ -31,10 +31,10 @@ Output format: one program per block, separated by '# ---' sentinel lines,
 compatible with train.py --corpus-file flag.
 
 Usage:
-    uv run python experiments/kelp/prepare_corpus.py --output experiments/kelp/corpus.txt
-    uv run python experiments/kelp/prepare_corpus.py --output corpus.txt --source-dirs /path/to/repos
-    uv run python experiments/kelp/prepare_corpus.py --output corpus.txt --no-github  # offline mode
-    uv run python experiments/kelp/prepare_corpus.py --output corpus_v7.txt --stack-edu-max 50000
+    uv run python -m kelp.prepare_corpus --output corpus.txt
+    uv run python -m kelp.prepare_corpus --output corpus.txt --source-dirs /path/to/repos
+    uv run python -m kelp.prepare_corpus --output corpus.txt --no-github  # offline mode
+    uv run python -m kelp.prepare_corpus --output corpus_v7.txt --stack-edu-max 50000
 """
 
 import argparse
@@ -45,7 +45,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from experiments.kelp.corpus import CORPUS_SEPARATOR, extract_docstring
+from kelp.corpus import CORPUS_SEPARATOR, extract_docstring
 
 logging.basicConfig(
     level=logging.INFO,

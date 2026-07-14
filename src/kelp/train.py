@@ -23,13 +23,13 @@ TreeDiff edit paths, and train the model to predict single edits.
 
 Usage:
     # Train on toy corpus (laptop)
-    uv run python experiments/kelp/train.py --preset toy --steps 1000
+    uv run python -m kelp.train --preset toy --steps 1000
 
     # Train overnight on CPU
-    uv run python experiments/kelp/train.py --preset overnight_cpu --steps 30000
+    uv run python -m kelp.train --preset overnight_cpu --steps 30000
 
     # With W&B logging
-    uv run python experiments/kelp/train.py --preset laptop --wandb-project kelp
+    uv run python -m kelp.train --preset laptop --wandb-project kelp
 """
 
 import argparse
@@ -38,12 +38,12 @@ import random
 import sys
 from dataclasses import replace
 
-from experiments.kelp.corpus import TOY_CORPUS, load_corpus
-from experiments.kelp.model.presets import PRESETS, get_preset
-from experiments.kelp.tree.augmentation import augment_bank
-from experiments.kelp.tree.subtree_bank import SubtreeBank
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
-from experiments.kelp.tree.train import (
+from kelp.corpus import TOY_CORPUS, load_corpus
+from kelp.model.presets import PRESETS, get_preset
+from kelp.tree.augmentation import augment_bank
+from kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.train import (
     EditTrainingConfig,
     create_edit_data_iter,
     train_edit_model,

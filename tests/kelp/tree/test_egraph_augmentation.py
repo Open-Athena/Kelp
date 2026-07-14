@@ -21,11 +21,11 @@ import ast
 
 import pytest
 
-from experiments.kelp.tree.egraph_augmentation import (
+from kelp.tree.egraph_augmentation import (
     augment_bank_with_egraph,
     generate_expression_variants,
 )
-from experiments.kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.subtree_bank import SubtreeBank
 
 
 @pytest.fixture

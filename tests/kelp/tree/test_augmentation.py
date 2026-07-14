@@ -22,13 +22,13 @@ import random
 
 import pytest
 
-from experiments.kelp.tree.augmentation import (
+from kelp.tree.augmentation import (
     augment_bank,
     generate_synthetic_subtrees,
     perturb_operators,
     rename_variables,
 )
-from experiments.kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.subtree_bank import SubtreeBank
 
 
 @pytest.fixture

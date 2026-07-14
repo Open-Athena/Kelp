@@ -45,8 +45,8 @@ from levanter.grug.attention import (
     attention as grug_attention,
 )
 
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.model.model import (
+from kelp.model.config import TreeDiffusionConfig
+from kelp.model.model import (
     TreeDiffusionAttentionParams,
     TreeDiffusionBlockParams,
     _init_weight,

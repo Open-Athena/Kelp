@@ -20,15 +20,15 @@
 import jax.numpy as jnp
 import pytest
 
-from experiments.kelp.tree.constrained_decoding import (
+from kelp.tree.constrained_decoding import (
     apply_bracket_constraints,
     brackets_balanced,
     compute_bracket_mask,
     sample_edit_with_validation,
     validate_edit,
 )
-from experiments.kelp.tree.mutation import Mutation
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.mutation import Mutation
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
 
 
 @pytest.fixture

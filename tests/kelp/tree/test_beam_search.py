@@ -20,8 +20,8 @@
 import jax
 import pytest
 
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.tree.beam_search import (
+from kelp.model.config import TreeDiffusionConfig
+from kelp.tree.beam_search import (
     BeamCandidate,
     _ar_generate_tokens,
     _find_span_end,
@@ -29,9 +29,9 @@ from experiments.kelp.tree.beam_search import (
     best_of_n,
     generate_edit,
 )
-from experiments.kelp.tree.edit_model import init_edit_params
-from experiments.kelp.tree.mutation import Mutation
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.edit_model import init_edit_params
+from kelp.tree.mutation import Mutation
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
 
 MAX_SEQ_LEN = 128
 

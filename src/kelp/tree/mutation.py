@@ -28,7 +28,7 @@ import logging
 import random
 from dataclasses import dataclass
 
-from experiments.kelp.tree.subtree_bank import (
+from kelp.tree.subtree_bank import (
     EXTRACTABLE_TYPES,
     STATEMENT_TYPES,
     SubtreeBank,

@@ -17,8 +17,8 @@
 
 """Tests for execution-guided reranking."""
 
-from experiments.kelp.tree.beam_search import BeamCandidate
-from experiments.kelp.tree.reranking import (
+from kelp.tree.beam_search import BeamCandidate
+from kelp.tree.reranking import (
     filter_passing,
     rerank_candidates,
     score_candidate,

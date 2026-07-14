@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from experiments.kelp.tree.subtree_bank import (
+from kelp.tree.subtree_bank import (
     EXPRESSION_TYPES,
     STATEMENT_TYPES,
     SubtreeBank,

@@ -37,22 +37,22 @@ import optax
 from jax.tree_util import register_dataclass
 from jaxtyping import Array
 
-from experiments.kelp.checkpointing import save_checkpoint
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.model.model import (
+from kelp.checkpointing import save_checkpoint
+from kelp.model.config import TreeDiffusionConfig
+from kelp.model.model import (
     TreeDiffusionAttentionParams,
     TreeDiffusionBlockParams,
 )
-from experiments.kelp.tree.edit_model import (
+from kelp.tree.edit_model import (
     EditModelParams,
     ar_loss,
     init_edit_params,
 )
-from experiments.kelp.corpus import extract_docstring
-from experiments.kelp.tree.mutation import corrupt_program
-from experiments.kelp.tree.subtree_bank import SubtreeBank
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
-from experiments.kelp.tree.tree_diff import find_path
+from kelp.corpus import extract_docstring
+from kelp.tree.mutation import corrupt_program
+from kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.tree_diff import find_path
 
 logger = logging.getLogger(__name__)
 

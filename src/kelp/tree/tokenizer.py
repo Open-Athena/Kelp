@@ -37,7 +37,7 @@ import ast
 import logging
 from dataclasses import dataclass
 
-from experiments.kelp.tree.mutation import _linecol_to_offset
+from kelp.tree.mutation import _linecol_to_offset
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +287,7 @@ class TreeDiffusionTokenizer:
         Returns:
             Boolean mask over position token indices.
         """
-        from experiments.kelp.tree.subtree_bank import (
+        from kelp.tree.subtree_bank import (
             EXTRACTABLE_TYPES,
             count_statements,
         )

@@ -28,9 +28,9 @@ Pipeline:
 4. Report per-program and aggregate metrics
 
 Usage:
-    uv run python experiments/kelp/evaluate_mbpp.py \\
+    uv run python -m kelp.evaluate_mbpp \\
         --checkpoint-dir checkpoints/kelp-edit-v3 \\
-        --corpus-file experiments/kelp/corpus.txt
+        --corpus-file corpus.txt
 """
 
 import argparse
@@ -44,14 +44,14 @@ from pathlib import Path
 
 import jax
 
-from experiments.kelp.checkpointing import find_best_checkpoint, load_checkpoint
-from experiments.kelp.corpus import load_corpus
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.tree.beam_search import best_of_n
-from experiments.kelp.tree.edit_model import EditModelParams
-from experiments.kelp.tree.mutation import corrupt_program
-from experiments.kelp.tree.subtree_bank import SubtreeBank
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.checkpointing import find_best_checkpoint, load_checkpoint
+from kelp.corpus import load_corpus
+from kelp.model.config import TreeDiffusionConfig
+from kelp.tree.beam_search import best_of_n
+from kelp.tree.edit_model import EditModelParams
+from kelp.tree.mutation import corrupt_program
+from kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
 
 logging.basicConfig(
     level=logging.INFO,

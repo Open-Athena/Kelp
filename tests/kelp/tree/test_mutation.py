@@ -22,7 +22,7 @@ import random
 
 import pytest
 
-from experiments.kelp.tree.mutation import (
+from kelp.tree.mutation import (
     Mutation,
     _find_candidates,
     _linecol_to_offset,
@@ -30,7 +30,7 @@ from experiments.kelp.tree.mutation import (
     corrupt_program,
     random_mutation,
 )
-from experiments.kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.subtree_bank import SubtreeBank
 
 CORPUS = [
     """\

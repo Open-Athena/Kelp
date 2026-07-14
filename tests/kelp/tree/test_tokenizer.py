@@ -19,8 +19,8 @@
 
 import pytest
 
-from experiments.kelp.corpus import extract_docstring
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.corpus import extract_docstring
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
 
 
 @pytest.fixture

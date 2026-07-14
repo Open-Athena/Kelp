@@ -21,8 +21,8 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.tree.edit_model import (
+from kelp.model.config import TreeDiffusionConfig
+from kelp.tree.edit_model import (
     _make_causal_mask,
     ar_loss,
     forward,

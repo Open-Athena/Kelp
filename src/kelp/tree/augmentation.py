@@ -40,7 +40,7 @@ import ast
 import logging
 import random
 
-from experiments.kelp.tree.subtree_bank import (
+from kelp.tree.subtree_bank import (
     EXPRESSION_TYPES,
     SubtreeBank,
     SubtreeEntry,
@@ -48,7 +48,7 @@ from experiments.kelp.tree.subtree_bank import (
 
 _EGGLOG_AVAILABLE = True
 try:
-    from experiments.kelp.tree.egraph_augmentation import augment_bank_with_egraph
+    from kelp.tree.egraph_augmentation import augment_bank_with_egraph
 except ImportError:
     _EGGLOG_AVAILABLE = False
 

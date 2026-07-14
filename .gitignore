@@ -1,1 +1,22 @@
-.venv
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtualenv
+.venv/
+
+# IDE
+.idea/
+
+# Kelp corpora (regenerate with kelp.prepare_corpus)
+corpus.txt
+corpus_v7.txt
+corpus*.txt
+
+# Training artifacts
+checkpoints/
+*.log
+wandb/

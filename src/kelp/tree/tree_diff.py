@@ -31,8 +31,8 @@ import ast
 import logging
 from dataclasses import dataclass
 
-from experiments.kelp.tree.mutation import Mutation, _node_source_span
-from experiments.kelp.tree.subtree_bank import count_statements
+from kelp.tree.mutation import Mutation, _node_source_span
+from kelp.tree.subtree_bank import count_statements
 
 logger = logging.getLogger(__name__)
 

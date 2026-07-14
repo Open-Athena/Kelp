@@ -20,7 +20,7 @@
 import ast
 
 
-from experiments.kelp.tree.tree_diff import (
+from kelp.tree.tree_diff import (
     Edit,
     find_path,
     one_step_edit,

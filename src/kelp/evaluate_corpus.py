@@ -27,13 +27,13 @@ The subtree bank is built from the sampled eval programs (not the full corpus),
 keeping corruption difficulty proportional to the eval set.
 
 Usage:
-    uv run python experiments/kelp/evaluate_corpus.py \\
+    uv run python -m kelp.evaluate_corpus \\
         --checkpoint-dir checkpoints/kelp-edit-v5 \\
-        --corpus-file experiments/kelp/corpus.txt
+        --corpus-file corpus.txt
 
-    uv run python experiments/kelp/evaluate_corpus.py \\
+    uv run python -m kelp.evaluate_corpus \\
         --checkpoint-dir checkpoints/kelp-edit-v5 --checkpoint step-010000 \\
-        --corpus-file experiments/kelp/corpus.txt --num-tasks 100
+        --corpus-file corpus.txt --num-tasks 100
 """
 
 import argparse
@@ -47,14 +47,14 @@ from pathlib import Path
 
 import jax
 
-from experiments.kelp.checkpointing import find_best_checkpoint, load_checkpoint
-from experiments.kelp.corpus import extract_docstring, is_valid_python, load_corpus
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.tree.beam_search import best_of_n
-from experiments.kelp.tree.edit_model import EditModelParams
-from experiments.kelp.tree.mutation import corrupt_program
-from experiments.kelp.tree.subtree_bank import SubtreeBank
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.checkpointing import find_best_checkpoint, load_checkpoint
+from kelp.corpus import extract_docstring, is_valid_python, load_corpus
+from kelp.model.config import TreeDiffusionConfig
+from kelp.tree.beam_search import best_of_n
+from kelp.tree.edit_model import EditModelParams
+from kelp.tree.mutation import corrupt_program
+from kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
 
 logging.basicConfig(
     level=logging.INFO,

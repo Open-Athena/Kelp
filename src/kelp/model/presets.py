@@ -22,7 +22,7 @@ Provides pre-configured model sizes targeting different compute environments.
 
 from dataclasses import dataclass
 
-from experiments.kelp.model.config import TreeDiffusionConfig
+from kelp.model.config import TreeDiffusionConfig
 from fray.cluster import ResourceConfig
 
 

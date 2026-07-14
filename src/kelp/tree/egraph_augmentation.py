@@ -33,7 +33,7 @@ import logging
 
 from egglog import EGraph, Expr, StringLike, rewrite, birewrite, vars_
 
-from experiments.kelp.tree.subtree_bank import (
+from kelp.tree.subtree_bank import (
     EXPRESSION_TYPES,
     SubtreeBank,
     SubtreeEntry,

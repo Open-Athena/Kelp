@@ -233,7 +233,7 @@ The prompt (typically a docstring) tells the model what the function should do, 
 ## Project Structure
 
 ```
-experiments/kelp/
+src/kelp/
 ├── README.md                 # This file
 ├── CHANGELOG.md              # Detailed change history
 ├── DIAGNOSTIC_REPORT.md      # Analysis of v3 failure modes
@@ -274,27 +274,27 @@ experiments/kelp/
 
 ```bash
 # Basic corpus (Marin repo + GitHub Code + HumanEval)
-uv run python experiments/kelp/prepare_corpus.py \
-  --output experiments/kelp/corpus.txt --max-github 5000
+uv run python -m kelp.prepare_corpus \
+  --output corpus.txt --max-github 5000
 
 # With Stack Edu educational Python (recommended for v7+)
-uv run python experiments/kelp/prepare_corpus.py \
-  --output experiments/kelp/corpus_v7.txt --stack-edu-max 50000
+uv run python -m kelp.prepare_corpus \
+  --output corpus_v7.txt --stack-edu-max 50000
 ```
 
 ### Train
 
 ```bash
 # Laptop, overnight (CPU)
-JAX_PLATFORMS=cpu uv run python experiments/kelp/train.py \
+JAX_PLATFORMS=cpu uv run python -m kelp.train \
   --preset overnight_cpu --steps 12000 --augment \
-  --corpus-file experiments/kelp/corpus.txt \
+  --corpus-file corpus.txt \
   --checkpoint-interval 2000 --output-dir checkpoints/kelp-edit
 
 # GPU with prompt conditioning + corruption curriculum (v7 recipe)
-uv run python experiments/kelp/train.py \
+uv run python -m kelp.train \
   --preset overnight_cpu --steps 50000 --augment \
-  --corpus-file experiments/kelp/corpus_v7.txt \
+  --corpus-file corpus_v7.txt \
   --prompt-conditioning --p-prompt 0.5 \
   --corruption-curriculum linear \
   --wandb-project kelp --wandb-run-name my-run \
@@ -305,15 +305,15 @@ uv run python experiments/kelp/train.py \
 
 ```bash
 # Corpus repair evaluation (exact match, syntactic validity)
-JAX_PLATFORMS=cpu uv run python experiments/kelp/evaluate_corpus.py \
+JAX_PLATFORMS=cpu uv run python -m kelp.evaluate_corpus \
   --checkpoint-dir checkpoints/kelp-edit-v7 \
-  --corpus-file experiments/kelp/corpus_v7.txt \
+  --corpus-file corpus_v7.txt \
   --num-tasks 50 --n-best-of 16
 
 # MBPP benchmark (test pass rate)
-JAX_PLATFORMS=cpu uv run python experiments/kelp/evaluate_mbpp.py \
+JAX_PLATFORMS=cpu uv run python -m kelp.evaluate_mbpp \
   --checkpoint-dir checkpoints/kelp-edit-v7 \
-  --corpus-file experiments/kelp/corpus_v7.txt \
+  --corpus-file corpus_v7.txt \
   --max-tasks 50 --n-best-of 16
 ```
 
@@ -321,12 +321,12 @@ JAX_PLATFORMS=cpu uv run python experiments/kelp/evaluate_mbpp.py \
 
 ```bash
 # One-command pipeline: train → eval → download → teardown
-bash experiments/kelp/infra/launch_v7.sh --wandb
+bash src/kelp/infra/launch_v7.sh --wandb
 
 # Or step-by-step:
-sky launch -c kelp-v7 experiments/kelp/infra/kelp-v7-train.yaml \
+sky launch -c kelp-v7 src/kelp/infra/kelp-v7-train.yaml \
   --env WANDB_API_KEY --retry-until-up -y
-sky exec kelp-v7 experiments/kelp/infra/kelp-v7-eval.yaml
+sky exec kelp-v7 src/kelp/infra/kelp-v7-eval.yaml
 rsync -avz kelp-v7:~/sky_workdir/checkpoints/kelp-edit-v7/ checkpoints/kelp-edit-v7/
 sky down kelp-v7 -y
 ```
@@ -365,20 +365,20 @@ git clone https://github.com/marin-community/marin && cd marin
 uv sync
 
 # 2. Prepare a corpus (streams Stack Edu, ~5 minutes)
-uv run python experiments/kelp/prepare_corpus.py \
-  --output experiments/kelp/corpus.txt --stack-edu-max 10000
+uv run python -m kelp.prepare_corpus \
+  --output corpus.txt --stack-edu-max 10000
 
 # 3. Train overnight (~5 hours on Apple Silicon)
-JAX_PLATFORMS=cpu uv run python experiments/kelp/train.py \
+JAX_PLATFORMS=cpu uv run python -m kelp.train \
   --preset overnight_cpu --steps 12000 --augment \
   --prompt-conditioning \
-  --corpus-file experiments/kelp/corpus.txt \
+  --corpus-file corpus.txt \
   --checkpoint-interval 2000 --output-dir checkpoints/my-run
 
 # 4. Evaluate
-JAX_PLATFORMS=cpu uv run python experiments/kelp/evaluate_corpus.py \
+JAX_PLATFORMS=cpu uv run python -m kelp.evaluate_corpus \
   --checkpoint-dir checkpoints/my-run \
-  --corpus-file experiments/kelp/corpus.txt
+  --corpus-file corpus.txt
 ```
 
 **Pick up a known issue.** Some concrete improvements we know are needed:
@@ -392,12 +392,12 @@ JAX_PLATFORMS=cpu uv run python experiments/kelp/evaluate_corpus.py \
 
 ```bash
 # Edit infra/kelp-v7-train.yaml to set your cloud provider, then:
-bash experiments/kelp/infra/launch_v7.sh --wandb
+bash src/kelp/infra/launch_v7.sh --wandb
 ```
 
 ### Development
 
-All code lives under `experiments/kelp/` with tests in `tests/kelp/`. Follow [Marin's contribution guidelines](../../CONTRIBUTING.md).
+All code lives under `src/kelp/` with tests in `tests/kelp/`. Follow [Marin's contribution guidelines](../../CONTRIBUTING.md).
 
 ```bash
 # Run kelp tests

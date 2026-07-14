@@ -31,7 +31,7 @@ import math
 import multiprocessing
 from dataclasses import dataclass
 
-from experiments.kelp.tree.beam_search import BeamCandidate
+from kelp.tree.beam_search import BeamCandidate
 
 logger = logging.getLogger(__name__)
 

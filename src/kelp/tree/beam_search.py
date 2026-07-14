@@ -37,15 +37,15 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PRNGKeyArray
 
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.tree.constrained_decoding import (
+from kelp.model.config import TreeDiffusionConfig
+from kelp.tree.constrained_decoding import (
     apply_bracket_constraints,
     validate_edit,
 )
-from experiments.kelp.tree.edit_model import EditModelParams, forward
-from experiments.kelp.tree.mutation import Mutation, _node_source_span
-from experiments.kelp.tree.subtree_bank import EXTRACTABLE_TYPES
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.edit_model import EditModelParams, forward
+from kelp.tree.mutation import Mutation, _node_source_span
+from kelp.tree.subtree_bank import EXTRACTABLE_TYPES
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
 
 logger = logging.getLogger(__name__)
 

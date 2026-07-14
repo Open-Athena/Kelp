@@ -12,19 +12,19 @@
 #   sky check  # verify Lambda credentials
 #
 # Usage:
-#   bash experiments/kelp/infra/launch_v7.sh
+#   bash src/kelp/infra/launch_v7.sh
 #
 # With W&B logging:
-#   bash experiments/kelp/infra/launch_v7.sh --wandb
+#   bash src/kelp/infra/launch_v7.sh --wandb
 #
 # To skip teardown (keep cluster for debugging):
-#   bash experiments/kelp/infra/launch_v7.sh --keep
+#   bash src/kelp/infra/launch_v7.sh --keep
 
 set -euo pipefail
 
 CLUSTER_NAME="kelp-v7"
-TRAIN_YAML="experiments/kelp/infra/kelp-v7-train.yaml"
-EVAL_YAML="experiments/kelp/infra/kelp-v7-eval.yaml"
+TRAIN_YAML="src/kelp/infra/kelp-v7-train.yaml"
+EVAL_YAML="src/kelp/infra/kelp-v7-eval.yaml"
 LOCAL_CKPT_DIR="checkpoints/kelp-edit-v7"
 KEEP_CLUSTER=false
 USE_WANDB=false
@@ -78,12 +78,12 @@ echo ">>> Step 3: Downloading checkpoints and results..."
 mkdir -p "$LOCAL_CKPT_DIR"
 
 if rsync -avz "${CLUSTER_NAME}:~/sky_workdir/checkpoints/kelp-edit-v7/" "$LOCAL_CKPT_DIR/" 2>/dev/null; then
-    rsync -avz "${CLUSTER_NAME}:~/sky_workdir/experiments/kelp/corpus_v7.txt" "experiments/kelp/corpus_v7.txt" 2>/dev/null || true
+    rsync -avz "${CLUSTER_NAME}:~/sky_workdir/corpus_v7.txt" "corpus_v7.txt" 2>/dev/null || true
     echo ">>> Downloaded from cluster via rsync."
 else
     echo ">>> Cluster rsync failed, downloading from S3..."
     aws s3 sync "s3://oa-fomo-outputs/kelp/kelp-edit-v7/" "$LOCAL_CKPT_DIR/"
-    aws s3 cp "s3://oa-fomo-outputs/kelp/corpus_v7.txt" "experiments/kelp/corpus_v7.txt" 2>/dev/null || true
+    aws s3 cp "s3://oa-fomo-outputs/kelp/corpus_v7.txt" "corpus_v7.txt" 2>/dev/null || true
     echo ">>> Downloaded from S3."
 fi
 

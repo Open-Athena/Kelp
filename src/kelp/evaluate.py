@@ -24,8 +24,8 @@ Loads a trained checkpoint and evaluates it on held-out program repair tasks:
 4. Report metrics: syntactic validity, edit precision, test pass rate
 
 Usage:
-    uv run python experiments/kelp/evaluate.py --checkpoint-dir checkpoints/kelp-edit
-    uv run python experiments/kelp/evaluate.py --checkpoint-dir checkpoints/kelp-edit --best-checkpoint
+    uv run python -m kelp.evaluate --checkpoint-dir checkpoints/kelp-edit
+    uv run python -m kelp.evaluate --checkpoint-dir checkpoints/kelp-edit --best-checkpoint
 """
 
 import argparse
@@ -38,14 +38,14 @@ from pathlib import Path
 
 import jax
 
-from experiments.kelp.checkpointing import find_best_checkpoint, load_checkpoint
-from experiments.kelp.corpus import is_valid_python, load_corpus
-from experiments.kelp.model.config import TreeDiffusionConfig
-from experiments.kelp.tree.beam_search import best_of_n
-from experiments.kelp.tree.edit_model import EditModelParams
-from experiments.kelp.tree.mutation import corrupt_program
-from experiments.kelp.tree.subtree_bank import SubtreeBank
-from experiments.kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.checkpointing import find_best_checkpoint, load_checkpoint
+from kelp.corpus import is_valid_python, load_corpus
+from kelp.model.config import TreeDiffusionConfig
+from kelp.tree.beam_search import best_of_n
+from kelp.tree.edit_model import EditModelParams
+from kelp.tree.mutation import corrupt_program
+from kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.tokenizer import TreeDiffusionTokenizer
 
 logging.basicConfig(
     level=logging.INFO,
