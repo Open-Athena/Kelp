@@ -23,11 +23,9 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from kelp.model.config import TreeDiffusionConfig
-from kelp.tree.edit_model import EditModelParams, init_edit_params
-from kelp.tree.subtree_bank import SubtreeBank
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
-from kelp.tree.train import (
+from kelp.model.config import EditModelConfig
+from kelp.model.edit_model import EditModelParams, init_edit_params
+from kelp.training.engine import (
     EditTrainingConfig,
     EditTrainingState,
     _edit_weight_decay_mask,
@@ -37,6 +35,8 @@ from kelp.tree.train import (
     make_edit_train_step,
     train_edit_model,
 )
+from kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.tokenizer import EditTokenizer
 
 CORPUS = [
     "def add(a, b):\n    return a + b\n",
@@ -61,12 +61,12 @@ def bank():
 
 @pytest.fixture
 def tokenizer():
-    return TreeDiffusionTokenizer(max_seq_len=MAX_SEQ_LEN)
+    return EditTokenizer(max_seq_len=MAX_SEQ_LEN)
 
 
 @pytest.fixture
 def model_cfg(tokenizer):
-    return TreeDiffusionConfig(
+    return EditModelConfig(
         vocab_size=tokenizer.vocab_size,
         hidden_dim=64,
         intermediate_dim=128,

@@ -10,6 +10,13 @@ dependencies = [
     "egglog",
 ]
 
+[project.scripts]
+kelp-train = "kelp.cli.train:main"
+kelp-evaluate = "kelp.cli.evaluate:main"
+kelp-evaluate-corpus = "kelp.cli.evaluate_corpus:main"
+kelp-evaluate-mbpp = "kelp.cli.evaluate_mbpp:main"
+kelp-prepare-corpus = "kelp.cli.prepare_corpus:main"
+
 [dependency-groups]
 dev = [
     "pytest",
@@ -66,5 +73,5 @@ disable_error_code = ["call-overload", "assignment", "misc"]
 # _edit_weight_decay_mask reuses the params PyTree with bool leaves as an optax
 # weight-decay mask; the dataclass fields are typed Array by design.
 [[tool.mypy.overrides]]
-module = "kelp.tree.train"
+module = "kelp.training.engine"
 disable_error_code = ["arg-type"]

@@ -20,7 +20,7 @@
 import jax.numpy as jnp
 import pytest
 
-from kelp.tree.constrained_decoding import (
+from kelp.inference.constrained_decoding import (
     apply_bracket_constraints,
     brackets_balanced,
     compute_bracket_mask,
@@ -28,12 +28,12 @@ from kelp.tree.constrained_decoding import (
     validate_edit,
 )
 from kelp.tree.mutation import Mutation
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.tokenizer import EditTokenizer
 
 
 @pytest.fixture
 def tokenizer():
-    return TreeDiffusionTokenizer(max_seq_len=64)
+    return EditTokenizer(max_seq_len=64)
 
 
 def test_brackets_balanced_empty():

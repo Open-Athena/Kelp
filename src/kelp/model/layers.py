@@ -33,7 +33,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 
 @register_dataclass
 @dataclass(frozen=True)
-class TreeDiffusionAttentionParams:
+class AttentionParams:
     """Parameters for a single attention layer."""
 
     w_q: jax.Array
@@ -44,10 +44,10 @@ class TreeDiffusionAttentionParams:
 
 @register_dataclass
 @dataclass(frozen=True)
-class TreeDiffusionBlockParams:
+class TransformerBlockParams:
     """Parameters for a transformer block."""
 
-    attn: TreeDiffusionAttentionParams
+    attn: AttentionParams
     rms_attn: jax.Array
     rms_mlp: jax.Array
     mlp_gate: jax.Array
@@ -55,7 +55,7 @@ class TreeDiffusionBlockParams:
     mlp_down: jax.Array
 
 
-def _init_weight(key: PRNGKeyArray, shape: tuple[int, ...], std: float) -> Float[Array, "..."]:
+def init_weight(key: PRNGKeyArray, shape: tuple[int, ...], std: float) -> Float[Array, "..."]:
     """Initialize weights with truncated normal."""
     return std * random.truncated_normal(key, -3, 3, shape)
 
@@ -74,9 +74,14 @@ def rms_norm(x: Float[Array, "... D"], weight: Float[Array, "D"], eps: float) ->
     return out.astype(dtype)
 
 
-def mlp(block: TreeDiffusionBlockParams, x: Float[Array, "B S D"]) -> Float[Array, "B S D"]:
-    """SwiGLU MLP."""
-    gate = jnp.einsum("bsh,hm->bsm", x, block.mlp_gate)
-    up = jnp.einsum("bsh,hm->bsm", x, block.mlp_up)
+def swiglu_mlp(
+    x: Float[Array, "B S D"],
+    gate_w: Float[Array, "D M"],
+    up_w: Float[Array, "D M"],
+    down_w: Float[Array, "M D"],
+) -> Float[Array, "B S D"]:
+    """SwiGLU MLP over the three weight matrices (decoupled from any params dataclass)."""
+    gate = jnp.einsum("bsh,hm->bsm", x, gate_w)
+    up = jnp.einsum("bsh,hm->bsm", x, up_w)
     activated = jax.nn.silu(gate) * up
-    return jnp.einsum("bsm,mh->bsh", activated, block.mlp_down)
+    return jnp.einsum("bsm,mh->bsh", activated, down_w)

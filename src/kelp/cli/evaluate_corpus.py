@@ -27,11 +27,11 @@ The subtree bank is built from the sampled eval programs (not the full corpus),
 keeping corruption difficulty proportional to the eval set.
 
 Usage:
-    uv run python -m kelp.evaluate_corpus \\
+    uv run python -m kelp.cli.evaluate_corpus \\
         --checkpoint-dir checkpoints/kelp-edit-v5 \\
         --corpus-file corpus.txt
 
-    uv run python -m kelp.evaluate_corpus \\
+    uv run python -m kelp.cli.evaluate_corpus \\
         --checkpoint-dir checkpoints/kelp-edit-v5 --checkpoint step-010000 \\
         --corpus-file corpus.txt --num-tasks 100
 """
@@ -47,14 +47,14 @@ from pathlib import Path
 
 import jax
 
-from kelp.checkpointing import find_best_checkpoint, load_checkpoint
 from kelp.corpus import extract_docstring, is_valid_python, load_corpus
-from kelp.model.config import TreeDiffusionConfig
-from kelp.tree.beam_search import best_of_n
-from kelp.tree.edit_model import EditModelParams
+from kelp.inference.beam_search import best_of_n
+from kelp.model.checkpointing import find_best_checkpoint, load_checkpoint
+from kelp.model.config import EditModelConfig
+from kelp.model.edit_model import EditModelParams
 from kelp.tree.mutation import corrupt_program
 from kelp.tree.subtree_bank import SubtreeBank
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.tokenizer import EditTokenizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,8 +77,8 @@ def normalize_whitespace(source: str) -> str:
 def evaluate_corpus_program(
     clean: str,
     params: EditModelParams,
-    config: TreeDiffusionConfig,
-    tokenizer: TreeDiffusionTokenizer,
+    config: EditModelConfig,
+    tokenizer: EditTokenizer,
     bank: SubtreeBank,
     key: jax.Array,
     num_corruptions: int = 5,
@@ -219,7 +219,7 @@ def main():
     logger.info(f"Evaluating checkpoint: {ckpt_dir}")
 
     params, config = load_checkpoint(ckpt_dir)
-    tokenizer = TreeDiffusionTokenizer(max_seq_len=config.max_seq_len, prompt_tokens=config.prompt_tokens)
+    tokenizer = EditTokenizer(max_seq_len=config.max_seq_len, prompt_tokens=config.prompt_tokens)
 
     # Load and sample from corpus.
     corpus = load_corpus(args.corpus_file)

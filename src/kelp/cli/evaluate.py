@@ -19,13 +19,13 @@
 
 Loads a trained checkpoint and evaluates it on held-out program repair tasks:
 1. Start from a corrupted program (produced by AST subtree replacement)
-2. Use beam search / best-of-N to generate candidate repairs
+2. Use best-of-N sampling to generate candidate repairs
 3. Score candidates by execution against test cases
 4. Report metrics: syntactic validity, edit precision, test pass rate
 
 Usage:
-    uv run python -m kelp.evaluate --checkpoint-dir checkpoints/kelp-edit
-    uv run python -m kelp.evaluate --checkpoint-dir checkpoints/kelp-edit --best-checkpoint
+    uv run python -m kelp.cli.evaluate --checkpoint-dir checkpoints/kelp-edit
+    uv run python -m kelp.cli.evaluate --checkpoint-dir checkpoints/kelp-edit --best-checkpoint
 """
 
 import argparse
@@ -39,14 +39,15 @@ from typing import cast
 
 import jax
 
-from kelp.checkpointing import find_best_checkpoint, load_checkpoint
 from kelp.corpus import is_valid_python, load_corpus
-from kelp.model.config import TreeDiffusionConfig
-from kelp.tree.beam_search import best_of_n
-from kelp.tree.edit_model import EditModelParams
+from kelp.eval_tasks import EVAL_TASKS
+from kelp.inference.beam_search import best_of_n
+from kelp.model.checkpointing import find_best_checkpoint, load_checkpoint
+from kelp.model.config import EditModelConfig
+from kelp.model.edit_model import EditModelParams
 from kelp.tree.mutation import corrupt_program
 from kelp.tree.subtree_bank import SubtreeBank
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.tokenizer import EditTokenizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,104 +55,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
-
-# Evaluation tasks: (clean_program, test_cases)
-# Each test case is (input_expression, expected_output).
-EVAL_TASKS = [
-    {
-        "name": "add",
-        "clean": "def add(a, b):\n    return a + b\n",
-        "tests": [
-            ("add(1, 2)", "3"),
-            ("add(0, 0)", "0"),
-            ("add(-1, 1)", "0"),
-            ("add(10, 20)", "30"),
-        ],
-    },
-    {
-        "name": "sub",
-        "clean": "def sub(a, b):\n    return a - b\n",
-        "tests": [
-            ("sub(5, 3)", "2"),
-            ("sub(0, 0)", "0"),
-            ("sub(1, 5)", "-4"),
-        ],
-    },
-    {
-        "name": "mul",
-        "clean": "def mul(a, b):\n    return a * b\n",
-        "tests": [
-            ("mul(3, 4)", "12"),
-            ("mul(0, 5)", "0"),
-            ("mul(-2, 3)", "-6"),
-        ],
-    },
-    {
-        "name": "neg",
-        "clean": "def neg(x):\n    return -x\n",
-        "tests": [
-            ("neg(5)", "-5"),
-            ("neg(-3)", "3"),
-            ("neg(0)", "0"),
-        ],
-    },
-    {
-        "name": "abs_val",
-        "clean": "def abs_val(x):\n    if x < 0:\n        return -x\n    return x\n",
-        "tests": [
-            ("abs_val(5)", "5"),
-            ("abs_val(-3)", "3"),
-            ("abs_val(0)", "0"),
-        ],
-    },
-    {
-        "name": "max_val",
-        "clean": "def max_val(a, b):\n    if a > b:\n        return a\n    return b\n",
-        "tests": [
-            ("max_val(3, 5)", "5"),
-            ("max_val(5, 3)", "5"),
-            ("max_val(4, 4)", "4"),
-        ],
-    },
-    {
-        "name": "min_val",
-        "clean": "def min_val(a, b):\n    if a < b:\n        return a\n    return b\n",
-        "tests": [
-            ("min_val(3, 5)", "3"),
-            ("min_val(5, 3)", "3"),
-            ("min_val(4, 4)", "4"),
-        ],
-    },
-    {
-        "name": "clamp",
-        "clean": (
-            "def clamp(x, lo, hi):\n    if x < lo:\n        return lo\n    if x > hi:\n        return hi\n    return x\n"  # noqa: E501 -- literal program sample
-        ),
-        "tests": [
-            ("clamp(5, 1, 10)", "5"),
-            ("clamp(-1, 0, 10)", "0"),
-            ("clamp(15, 0, 10)", "10"),
-        ],
-    },
-    {
-        "name": "double",
-        "clean": "def double(x):\n    return x + x\n",
-        "tests": [
-            ("double(3)", "6"),
-            ("double(0)", "0"),
-            ("double(-2)", "-4"),
-        ],
-    },
-    {
-        "name": "square",
-        "clean": "def square(x):\n    return x * x\n",
-        "tests": [
-            ("square(3)", "9"),
-            ("square(0)", "0"),
-            ("square(-2)", "4"),
-        ],
-    },
-]
 
 
 def run_test(program: str, call_expr: str, expected: str) -> bool:
@@ -168,13 +71,12 @@ def run_test(program: str, call_expr: str, expected: str) -> bool:
 def evaluate_task(
     task: dict,
     params: EditModelParams,
-    config: TreeDiffusionConfig,
-    tokenizer: TreeDiffusionTokenizer,
+    config: EditModelConfig,
+    tokenizer: EditTokenizer,
     bank: SubtreeBank,
     key: jax.Array,
     num_corruptions: int = 5,
     corruption_steps: int = 3,
-    beam_size: int = 8,
     max_depth: int = 10,
     n_best_of: int = 16,
 ) -> dict:
@@ -281,7 +183,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-corruptions", type=int, default=5, help="Corruption trials per task")
     parser.add_argument("--corruption-steps", type=int, default=3, help="AST mutations per corruption")
-    parser.add_argument("--beam-size", type=int, default=8, help="Beam size for search")
     parser.add_argument("--max-depth", type=int, default=10, help="Maximum edit depth")
     parser.add_argument("--n-best-of", type=int, default=16, help="Number of independent rollouts")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -310,7 +211,7 @@ def main():
     logger.info(f"Evaluating checkpoint: {ckpt_dir}")
 
     params, config = load_checkpoint(ckpt_dir)
-    tokenizer = TreeDiffusionTokenizer(max_seq_len=config.max_seq_len)
+    tokenizer = EditTokenizer(max_seq_len=config.max_seq_len)
 
     # Build subtree bank: prefer training corpus for realistic corruption.
     if args.corpus_file:
@@ -345,7 +246,6 @@ def main():
             key=task_key,
             num_corruptions=args.num_corruptions,
             corruption_steps=args.corruption_steps,
-            beam_size=args.beam_size,
             max_depth=args.max_depth,
             n_best_of=args.n_best_of,
         )

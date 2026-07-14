@@ -25,8 +25,6 @@ import pytest
 from kelp.tree.mutation import (
     Mutation,
     _find_candidates,
-    _linecol_to_offset,
-    _node_source_span,
     corrupt_program,
     random_mutation,
 )
@@ -85,30 +83,6 @@ def flatten(lst):
 @pytest.fixture
 def bank():
     return SubtreeBank.from_corpus(CORPUS)
-
-
-def test_linecol_to_offset_first_line():
-    source = "hello world\nsecond line\n"
-    assert _linecol_to_offset(source, 1, 0) == 0
-    assert _linecol_to_offset(source, 1, 6) == 6
-
-
-def test_linecol_to_offset_second_line():
-    source = "hello world\nsecond line\n"
-    assert _linecol_to_offset(source, 2, 0) == 12
-    assert _linecol_to_offset(source, 2, 7) == 19
-
-
-def test_node_source_span():
-    source = "x = 1 + 2\n"
-    tree = ast.parse(source)
-    # The BinOp node should span "1 + 2".
-    assign = tree.body[0]
-    binop = assign.value
-    span = _node_source_span(source, binop)
-    assert span is not None
-    start, end = span
-    assert source[start:end] == "1 + 2"
 
 
 def test_mutation_apply():

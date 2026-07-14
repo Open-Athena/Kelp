@@ -37,21 +37,21 @@ import optax
 from jax.tree_util import register_dataclass
 from jaxtyping import Array
 
-from kelp.checkpointing import save_checkpoint
 from kelp.corpus import extract_docstring
-from kelp.model.config import TreeDiffusionConfig
-from kelp.model.model import (
-    TreeDiffusionAttentionParams,
-    TreeDiffusionBlockParams,
-)
-from kelp.tree.edit_model import (
+from kelp.model.checkpointing import save_checkpoint
+from kelp.model.config import EditModelConfig
+from kelp.model.edit_model import (
     EditModelParams,
     ar_loss,
     init_edit_params,
 )
+from kelp.model.layers import (
+    AttentionParams,
+    TransformerBlockParams,
+)
 from kelp.tree.mutation import corrupt_program
 from kelp.tree.subtree_bank import SubtreeBank
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.tokenizer import EditTokenizer
 from kelp.tree.tree_diff import find_path
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ class EditTrainingState:
 class EditTrainingConfig:
     """Configuration for tree diffusion training."""
 
-    model: TreeDiffusionConfig
+    model: EditModelConfig
     """Model configuration."""
 
     max_seq_len: int = 512
@@ -170,8 +170,8 @@ def _edit_weight_decay_mask(params: EditModelParams) -> EditModelParams:
     Excludes embeddings and normalization weights from weight decay.
     """
     masked_blocks = tuple(
-        TreeDiffusionBlockParams(
-            attn=TreeDiffusionAttentionParams(
+        TransformerBlockParams(
+            attn=AttentionParams(
                 w_q=True,
                 w_k=True,
                 w_v=True,
@@ -217,7 +217,7 @@ def create_edit_optimizer(config: EditTrainingConfig) -> optax.GradientTransform
 
 
 def make_edit_train_step(
-    config: TreeDiffusionConfig,
+    config: EditModelConfig,
     optimizer: optax.GradientTransformation,
 ):
     """Create a JIT-compiled training step for the AR edit model."""
@@ -259,7 +259,7 @@ def generate_training_example(
     clean_source: str,
     corpus: list[str],
     bank: SubtreeBank,
-    tokenizer: TreeDiffusionTokenizer,
+    tokenizer: EditTokenizer,
     max_seq_len: int,
     config: EditTrainingConfig,
     rng: pyrandom.Random,
@@ -353,7 +353,7 @@ def generate_training_example(
 def create_edit_data_iter(
     corpus: list[str],
     bank: SubtreeBank,
-    tokenizer: TreeDiffusionTokenizer,
+    tokenizer: EditTokenizer,
     config: EditTrainingConfig,
     seed: int = 42,
 ) -> Iterator[dict[str, Array]]:

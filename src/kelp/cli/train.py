@@ -23,13 +23,13 @@ TreeDiff edit paths, and train the model to predict single edits.
 
 Usage:
     # Train on toy corpus (laptop)
-    uv run python -m kelp.train --preset toy --steps 1000
+    uv run python -m kelp.cli.train --preset toy --steps 1000
 
     # Train overnight on CPU
-    uv run python -m kelp.train --preset overnight_cpu --steps 30000
+    uv run python -m kelp.cli.train --preset overnight_cpu --steps 30000
 
     # With W&B logging
-    uv run python -m kelp.train --preset laptop --wandb-project kelp
+    uv run python -m kelp.cli.train --preset laptop --wandb-project kelp
 """
 
 import argparse
@@ -39,15 +39,15 @@ import sys
 from dataclasses import replace
 
 from kelp.corpus import TOY_CORPUS, load_corpus
-from kelp.model.presets import PRESETS, get_preset
-from kelp.tree.augmentation import augment_bank
-from kelp.tree.subtree_bank import SubtreeBank
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
-from kelp.tree.train import (
+from kelp.training.engine import (
     EditTrainingConfig,
     create_edit_data_iter,
     train_edit_model,
 )
+from kelp.training.presets import PRESETS, get_preset
+from kelp.tree.augmentation import augment_bank
+from kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.tokenizer import EditTokenizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,7 +74,7 @@ def parse_args() -> argparse.Namespace:
         "--corpus-file",
         type=str,
         default=None,
-        help="Path to corpus file (one program per entry, separated by blank lines)",
+        help="Path to corpus file (programs separated by '# ---' sentinel lines; see corpus.CORPUS_SEPARATOR)",
     )
     parser.add_argument("--checkpoint-interval", type=int, default=1000, help="Steps between checkpoints")
     parser.add_argument(
@@ -139,7 +139,7 @@ def main():
     if args.augment:
         rng = random.Random(args.seed)
         bank = augment_bank(bank, rng, n_renamed=2, n_perturbed=2, synthetic_count=50)
-    tokenizer = TreeDiffusionTokenizer(max_seq_len=model_config.max_seq_len, prompt_tokens=model_config.prompt_tokens)
+    tokenizer = EditTokenizer(max_seq_len=model_config.max_seq_len, prompt_tokens=model_config.prompt_tokens)
     logger.info(f"Subtree bank: {bank.total_entries} entries across {len(bank.entries)} node types")
 
     # Override model config vocab_size to match tokenizer.

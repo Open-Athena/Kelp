@@ -24,17 +24,17 @@ Combines multiple sources to maximize diversity:
 4. codeparrot/github-code: streaming Python from GitHub (~5,000+ functions)
 5. HuggingFaceTB/stack-edu: educational Python code filtered from The Stack v2
 
-Eval task decontamination: programs matching EVAL_TASKS in evaluate.py
+Eval task decontamination: programs matching kelp.eval_tasks.EVAL_TASKS
 are automatically excluded from the training corpus to prevent train/test leakage.
 
 Output format: one program per block, separated by '# ---' sentinel lines,
 compatible with train.py --corpus-file flag.
 
 Usage:
-    uv run python -m kelp.prepare_corpus --output corpus.txt
-    uv run python -m kelp.prepare_corpus --output corpus.txt --source-dirs /path/to/repos
-    uv run python -m kelp.prepare_corpus --output corpus.txt --no-github  # offline mode
-    uv run python -m kelp.prepare_corpus --output corpus_v7.txt --stack-edu-max 50000
+    uv run python -m kelp.cli.prepare_corpus --output corpus.txt
+    uv run python -m kelp.cli.prepare_corpus --output corpus.txt --source-dirs /path/to/repos
+    uv run python -m kelp.cli.prepare_corpus --output corpus.txt --no-github  # offline mode
+    uv run python -m kelp.cli.prepare_corpus --output corpus_v7.txt --stack-edu-max 50000
 """
 
 import argparse
@@ -46,6 +46,7 @@ import textwrap
 from pathlib import Path
 
 from kelp.corpus import CORPUS_SEPARATOR, extract_docstring
+from kelp.eval_tasks import EVAL_SIGNATURES
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,22 +57,8 @@ logger = logging.getLogger(__name__)
 
 EXCLUDE_DIRS = {".venv", "__pycache__", ".git", "node_modules", "checkpoints", ".eggs", "build", "dist"}
 
-# Function signatures of EVAL_TASKS in evaluate.py. Any training program that
-# contains one of these as a substring is excluded to prevent train/test leakage.
-# This catches both direct matches (the function itself) and indirect leakage
-# (test fixtures / helpers that embed eval task code as string literals).
-EVAL_SIGNATURES = [
-    "def add(a, b):",
-    "def sub(a, b):",
-    "def mul(a, b):",
-    "def neg(x):",
-    "def abs_val(x):",
-    "def max_val(a, b):",
-    "def min_val(a, b):",
-    "def clamp(x, lo, hi):",
-    "def double(x):",
-    "def square(x):",
-]
+# Eval-task decontamination signatures live in kelp.eval_tasks (derived from
+# EVAL_TASKS), so they can never drift out of sync with the eval set.
 
 
 def extract_functions_from_file(source: str, max_length: int) -> list[str]:
@@ -267,7 +254,7 @@ def deduplicate_and_filter(programs: list[str], max_length: int) -> list[str]:
     - Are under max_length characters
     - Are not trivially short (<20 chars)
     - Are unique (exact match dedup)
-    - Do NOT match any EVAL_BLOCKLIST entry (train/test decontamination)
+    - Do NOT match any EVAL_SIGNATURES entry (train/test decontamination)
     """
     seen = set()
     filtered = []

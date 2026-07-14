@@ -518,14 +518,8 @@ def augment_bank_with_egraph(
     Returns:
         Tuple of (augmented bank, number of new entries added).
     """
-    augmented = SubtreeBank()
-    seen: set[tuple[str, str]] = set()
-
-    # Copy all existing entries.
-    for node_type, entries in bank.entries.items():
-        for entry in entries:
-            augmented.add(entry)
-            seen.add((node_type, entry.source))
+    augmented = bank.copy()
+    seen: set[tuple[str, str]] = augmented.source_keys()
 
     added = 0
     expression_entries = 0

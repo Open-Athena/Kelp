@@ -20,30 +20,29 @@
 import jax
 import pytest
 
-from kelp.model.config import TreeDiffusionConfig
-from kelp.tree.beam_search import (
+from kelp.inference.beam_search import (
     BeamCandidate,
     _ar_generate_tokens,
-    _find_span_end,
     beam_search,
     best_of_n,
     generate_edit,
 )
-from kelp.tree.edit_model import init_edit_params
+from kelp.model.config import EditModelConfig
+from kelp.model.edit_model import init_edit_params
 from kelp.tree.mutation import Mutation
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.tokenizer import EditTokenizer
 
 MAX_SEQ_LEN = 128
 
 
 @pytest.fixture
 def tokenizer():
-    return TreeDiffusionTokenizer(max_seq_len=MAX_SEQ_LEN)
+    return EditTokenizer(max_seq_len=MAX_SEQ_LEN)
 
 
 @pytest.fixture
 def model_cfg(tokenizer):
-    return TreeDiffusionConfig(
+    return EditModelConfig(
         vocab_size=tokenizer.vocab_size,
         hidden_dim=64,
         intermediate_dim=128,
@@ -75,37 +74,6 @@ def test_beam_candidate_with_edits():
     c = BeamCandidate(source="x = 2\n", score=-1.0, depth=1, edits=(m,))
     assert len(c.edits) == 1
     assert c.edits[0].replacement == "2"
-
-
-# --- _find_span_end ---
-
-
-def test_find_span_end_expression():
-    source = "x = 1 + 2\n"
-    # The BinOp "1 + 2" starts at offset 4.
-    end = _find_span_end(source, 4)
-    assert end is not None
-    assert source[4:end] == "1 + 2"
-
-
-def test_find_span_end_call():
-    source = "x = foo(1)\n"
-    # The Call "foo(1)" starts at offset 4.
-    end = _find_span_end(source, 4)
-    assert end is not None
-    assert source[4:end] == "foo(1)"
-
-
-def test_find_span_end_no_match():
-    source = "x = 1\n"
-    # Offset 99 doesn't correspond to any node.
-    end = _find_span_end(source, 99)
-    assert end is None
-
-
-def test_find_span_end_invalid_python():
-    end = _find_span_end("def (broken", 0)
-    assert end is None
 
 
 # --- _ar_generate_tokens ---

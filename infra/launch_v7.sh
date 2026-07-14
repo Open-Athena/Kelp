@@ -12,19 +12,19 @@
 #   sky check  # verify Lambda credentials
 #
 # Usage:
-#   bash src/kelp/infra/launch_v7.sh
+#   bash infra/launch_v7.sh
 #
 # With W&B logging:
-#   bash src/kelp/infra/launch_v7.sh --wandb
+#   bash infra/launch_v7.sh --wandb
 #
 # To skip teardown (keep cluster for debugging):
-#   bash src/kelp/infra/launch_v7.sh --keep
+#   bash infra/launch_v7.sh --keep
 
 set -euo pipefail
 
 CLUSTER_NAME="kelp-v7"
-TRAIN_YAML="src/kelp/infra/kelp-v7-train.yaml"
-EVAL_YAML="src/kelp/infra/kelp-v7-eval.yaml"
+TRAIN_YAML="infra/kelp-v7-train.yaml"
+EVAL_YAML="infra/kelp-v7-eval.yaml"
 LOCAL_CKPT_DIR="checkpoints/kelp-edit-v7"
 KEEP_CLUSTER=false
 USE_WANDB=false

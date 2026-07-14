@@ -21,8 +21,8 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from kelp.model.config import TreeDiffusionConfig
-from kelp.tree.edit_model import (
+from kelp.model.config import EditModelConfig
+from kelp.model.edit_model import (
     _make_causal_mask,
     ar_loss,
     forward,
@@ -32,7 +32,7 @@ from kelp.tree.edit_model import (
 
 @pytest.fixture
 def tiny_cfg():
-    return TreeDiffusionConfig(
+    return EditModelConfig(
         vocab_size=128,
         hidden_dim=64,
         intermediate_dim=128,
@@ -65,7 +65,7 @@ def test_init_params_block_shapes(params, tiny_cfg):
     block = params.blocks[0]
     D = tiny_cfg.hidden_dim
     N = tiny_cfg.num_heads
-    H = tiny_cfg.inferred_head_dim
+    H = tiny_cfg.head_dim
     I = tiny_cfg.intermediate_dim  # noqa: E741 -- matches D/N/M/H dim naming
 
     assert block.attn.w_q.shape == (D, N * H)

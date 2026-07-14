@@ -29,7 +29,6 @@ The reverse (denoising) process iteratively refines programs:
 5. Repeat until max_depth or convergence
 """
 
-import ast
 import logging
 from dataclasses import dataclass
 
@@ -37,15 +36,15 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PRNGKeyArray
 
-from kelp.model.config import TreeDiffusionConfig
-from kelp.tree.constrained_decoding import (
+from kelp.inference.constrained_decoding import (
     apply_bracket_constraints,
-    validate_edit,
+    sample_edit_with_validation,
 )
-from kelp.tree.edit_model import EditModelParams, forward
-from kelp.tree.mutation import Mutation, _node_source_span
-from kelp.tree.subtree_bank import EXTRACTABLE_TYPES
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.model.config import EditModelConfig
+from kelp.model.edit_model import EditModelParams, forward
+from kelp.tree.ast_positions import find_span_end
+from kelp.tree.mutation import Mutation
+from kelp.tree.tokenizer import EditTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +69,8 @@ class BeamCandidate:
 def _ar_generate_tokens(
     params: EditModelParams,
     context_token_ids: list[int],
-    cfg: TreeDiffusionConfig,
-    tokenizer: TreeDiffusionTokenizer,
+    cfg: EditModelConfig,
+    tokenizer: EditTokenizer,
     key: PRNGKeyArray,
     temperature: float = 1.0,
     max_new_tokens: int = 64,
@@ -145,8 +144,8 @@ def _ar_generate_tokens(
 def generate_edit(
     params: EditModelParams,
     source: str,
-    cfg: TreeDiffusionConfig,
-    tokenizer: TreeDiffusionTokenizer,
+    cfg: EditModelConfig,
+    tokenizer: EditTokenizer,
     key: PRNGKeyArray,
     temperature: float = 1.0,
     max_replacement_len: int = 64,
@@ -217,71 +216,45 @@ def generate_edit(
             break
         replacement_tokens.append(tid)
 
-    replacement_source = tokenizer.decode_source(replacement_tokens)
-
-    # Find the end of the original span at the edit position.
-    # Use the AST to find the node boundary.
-    original_span_end = _find_span_end(source, edit_position)
+    # Find the end of the original span at the edit position (AST node boundary).
+    original_span_end = find_span_end(source, edit_position)
     if original_span_end is None:
         return None, float("-inf")
 
-    original = source[edit_position:original_span_end]
-
-    mutation = Mutation(
-        start=edit_position,
-        end=original_span_end,
-        replacement=replacement_source,
-        node_type="unknown",
-        original=original,
+    # Decode, build, and validate the edit through the single shared path.
+    mutation = sample_edit_with_validation(
+        source=source,
+        edit_position=edit_position,
+        original_span_end=original_span_end,
+        replacement_tokens=replacement_tokens,
+        tokenizer=tokenizer,
     )
-
-    if validate_edit(source, mutation):
-        return mutation, log_prob
-
-    return None, float("-inf")
+    if mutation is None:
+        return None, float("-inf")
+    return mutation, log_prob
 
 
-def _find_span_end(source: str, start_offset: int) -> int | None:
-    """Find the end of the AST node at the given character offset.
+def _dedup_and_rank(candidates: list[BeamCandidate]) -> list[BeamCandidate]:
+    """Deduplicate candidates by source (keeping the highest score), then rank.
 
-    Walks the AST to find the innermost node whose start position matches
-    the offset, and returns its end position.
-
-    Returns None if no matching node is found.
+    Ranking prefers edited candidates (depth > 0) over no-ops before comparing
+    cumulative score: an unedited program keeps its initial score=0.0, which is
+    an arbitrary baseline rather than a model prediction. Without the depth
+    tie-break, that baseline would outrank genuinely model-scored edits (whose
+    log-prob sums are negative), so the no-op program would always win.
     """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None
-
-    best_end = None
-    best_size = float("inf")
-
-    for node in ast.walk(tree):
-        type_name = type(node).__name__
-        if type_name not in EXTRACTABLE_TYPES:
-            continue
-
-        span = _node_source_span(source, node)
-        if span is None:
-            continue
-
-        node_start, node_end = span
-        if node_start == start_offset:
-            # Prefer the smallest (most specific) node.
-            size = node_end - node_start
-            if size < best_size:
-                best_end = node_end
-                best_size = size
-
-    return best_end
+    seen: dict[str, BeamCandidate] = {}
+    for c in candidates:
+        if c.source not in seen or c.score > seen[c.source].score:
+            seen[c.source] = c
+    return sorted(seen.values(), key=lambda c: (c.depth > 0, c.score), reverse=True)
 
 
 def beam_search(
     params: EditModelParams,
     initial_programs: list[str],
-    cfg: TreeDiffusionConfig,
-    tokenizer: TreeDiffusionTokenizer,
+    cfg: EditModelConfig,
+    tokenizer: EditTokenizer,
     key: PRNGKeyArray,
     beam_size: int = 16,
     expansions_per_beam: int = 3,
@@ -349,17 +322,8 @@ def beam_search(
                     )
                 )
 
-        # Deduplicate by source (keep highest score).
-        seen: dict[str, BeamCandidate] = {}
-        for c in candidates:
-            if c.source not in seen or c.score > seen[c.source].score:
-                seen[c.source] = c
-
-        # Sort by score (highest first) and prune to beam_size.
-        # Prefer edited candidates (depth > 0) over no-ops: the initial
-        # score=0.0 is an arbitrary baseline, not a model prediction, so
-        # comparing it to model-scored edits is misleading.
-        beam = sorted(seen.values(), key=lambda c: (c.depth > 0, c.score), reverse=True)[:beam_size]
+        # Deduplicate by source, rank, and prune to beam_size.
+        beam = _dedup_and_rank(candidates)[:beam_size]
 
         if not beam:
             break
@@ -378,8 +342,8 @@ def beam_search(
 def best_of_n(
     params: EditModelParams,
     source: str,
-    cfg: TreeDiffusionConfig,
-    tokenizer: TreeDiffusionTokenizer,
+    cfg: EditModelConfig,
+    tokenizer: EditTokenizer,
     key: PRNGKeyArray,
     n: int = 16,
     max_depth: int = 30,
@@ -438,13 +402,4 @@ def best_of_n(
 
         results.append(candidate)
 
-    # Deduplicate and sort.
-    seen: dict[str, BeamCandidate] = {}
-    for c in results:
-        if c.source not in seen or c.score > seen[c.source].score:
-            seen[c.source] = c
-
-    # Prefer edited candidates (depth > 0) over no-ops. The initial score=0.0
-    # is an arbitrary baseline — comparing it to model-scored edits causes the
-    # no-op to always win. See DIAGNOSTIC_REPORT.md Finding 2.
-    return sorted(seen.values(), key=lambda c: (c.depth > 0, c.score), reverse=True)
+    return _dedup_and_rank(results)

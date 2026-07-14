@@ -54,7 +54,7 @@ run: |
   echo "" | tee -a "$LOG_FILE"
   echo "=== Corpus Evaluation ===" | tee -a "$LOG_FILE"
 
-  uv run python -m kelp.evaluate_corpus \
+  uv run python -m kelp.cli.evaluate_corpus \
       --checkpoint-dir "$CKPT_DIR" \
       --checkpoint "$LATEST_CKPT" \
       --corpus-file "$CORPUS_FILE" \
@@ -68,7 +68,7 @@ run: |
   echo "" | tee -a "$LOG_FILE"
   echo "=== MBPP Evaluation ===" | tee -a "$LOG_FILE"
 
-  uv run python -m kelp.evaluate_mbpp \
+  uv run python -m kelp.cli.evaluate_mbpp \
       --checkpoint-dir "$CKPT_DIR" \
       --checkpoint "$LATEST_CKPT" \
       --corpus-file "$CORPUS_FILE" \
