@@ -66,7 +66,7 @@ def test_init_params_block_shapes(params, tiny_cfg):
     D = tiny_cfg.hidden_dim
     N = tiny_cfg.num_heads
     H = tiny_cfg.inferred_head_dim
-    I = tiny_cfg.intermediate_dim
+    I = tiny_cfg.intermediate_dim  # noqa: E741 -- matches D/N/M/H dim naming
 
     assert block.attn.w_q.shape == (D, N * H)
     assert block.attn.w_k.shape == (D, N * H)  # num_kv_heads == num_heads

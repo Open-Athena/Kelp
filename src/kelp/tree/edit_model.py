@@ -39,9 +39,10 @@ from einops import rearrange
 from jax import random
 from jax.tree_util import register_dataclass
 from jaxtyping import Array, Float, Int, PRNGKeyArray
-
 from levanter.grug.attention import (
     apply_rotary_embedding as grug_apply_rotary,
+)
+from levanter.grug.attention import (
     attention as grug_attention,
 )
 
@@ -92,7 +93,7 @@ def init_edit_params(cfg: TreeDiffusionConfig, *, key: PRNGKeyArray) -> EditMode
     final_norm = jnp.ones((cfg.hidden_dim,), dtype=jnp.float32)
 
     blocks: list[TreeDiffusionBlockParams] = []
-    D, N, M, H, I = cfg.hidden_dim, cfg.num_heads, cfg.num_kv_heads, head_dim, cfg.intermediate_dim
+    D, N, M, H, I = cfg.hidden_dim, cfg.num_heads, cfg.num_kv_heads, head_dim, cfg.intermediate_dim  # noqa: E741 -- matrix dims match D/N/M/H single-letter convention
 
     for i in range(cfg.num_layers):
         k_q, k_k, k_v, k_o, k_gate, k_up, k_down = random.split(layer_keys[i], 7)

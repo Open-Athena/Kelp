@@ -38,6 +38,7 @@ from jax.tree_util import register_dataclass
 from jaxtyping import Array
 
 from kelp.checkpointing import save_checkpoint
+from kelp.corpus import extract_docstring
 from kelp.model.config import TreeDiffusionConfig
 from kelp.model.model import (
     TreeDiffusionAttentionParams,
@@ -48,7 +49,6 @@ from kelp.tree.edit_model import (
     ar_loss,
     init_edit_params,
 )
-from kelp.corpus import extract_docstring
 from kelp.tree.mutation import corrupt_program
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import TreeDiffusionTokenizer
@@ -367,8 +367,8 @@ def create_edit_data_iter(
     step = 0
 
     while True:
-        batch_token_ids = []
-        batch_loss_masks = []
+        batch_token_ids: list[list[int]] = []
+        batch_loss_masks: list[list[int]] = []
 
         while len(batch_token_ids) < config.batch_size:
             clean_source = rng.choice(corpus)
@@ -429,8 +429,9 @@ def train_edit_model(
     wandb_run = None
     if config.wandb_project is not None:
         try:
-            import wandb
             from dataclasses import asdict
+
+            import wandb
 
             wandb_run = wandb.init(
                 entity=config.wandb_entity,

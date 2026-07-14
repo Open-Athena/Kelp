@@ -104,8 +104,7 @@ def test_rerank_tiebreak_by_model_score():
     """When execution scores are equal, model score breaks the tie."""
     c1 = _make_candidate("def f(x):\n    return x\n", score=-1.0)
     c2 = _make_candidate("def g(x):\n    return x\n", score=-2.0)
-    tests = ["assert f(1) == 1"]  # Only c1 passes.
-    # But with no tests that both pass, let's use a test both fail.
+    # Use a test both candidates fail, so ranking must fall back to model score.
     tests_both_fail = ["assert False"]
     ranked = rerank_candidates([c2, c1], tests_both_fail)
     # Both fail all tests, so tiebreak by model score (c1 is higher).

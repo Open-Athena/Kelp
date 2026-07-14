@@ -193,9 +193,9 @@ def test_prompt_token_ids_are_distinct(tok_prompt):
 
 def test_prompt_token_ids_not_available_without_flag(tok):
     with pytest.raises(ValueError):
-        tok.prompt_start_token_id
+        _ = tok.prompt_start_token_id
     with pytest.raises(ValueError):
-        tok.prompt_end_token_id
+        _ = tok.prompt_end_token_id
 
 
 def test_prompt_position_offset_shifted(tok, tok_prompt):

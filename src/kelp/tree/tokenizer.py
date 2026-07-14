@@ -304,14 +304,14 @@ class TreeDiffusionTokenizer:
             type_name = type(node).__name__
             if type_name not in EXTRACTABLE_TYPES:
                 continue
-            if not hasattr(node, "lineno") or node.end_lineno is None:
+            if not hasattr(node, "lineno") or node.end_lineno is None:  # type: ignore[attr-defined]  # position attrs guarded by hasattr
                 continue
 
             stmt_count = count_statements(node)
             if stmt_count > max_edit_stmts:
                 continue
 
-            char_offset = _linecol_to_offset(source, node.lineno, node.col_offset)
+            char_offset = _linecol_to_offset(source, node.lineno, node.col_offset)  # type: ignore[attr-defined]
             token_idx = self.char_offset_to_token_index(source, char_offset)
 
             if 0 <= token_idx < min(num_context_tokens, self.num_position_tokens):

@@ -1,0 +1,41 @@
+# Pre-commit hooks for Kelp. Run with `uvx pre-commit run --all-files`.
+# ruff and mypy run through `uv run` so they use the exact versions pinned in
+# the project's dev dependency group (uv.lock) and the config in pyproject.toml.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        # SkyPilot launch configs use accelerator DSL (e.g. {A100:1, A100:8})
+        # that is valid SkyPilot but not strict YAML.
+        exclude: ^src/kelp/infra/.*\.ya?ml$
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: debug-statements
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false

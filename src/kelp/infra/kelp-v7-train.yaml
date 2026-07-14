@@ -55,7 +55,7 @@ run: |
   set -euo pipefail
   export PATH="$HOME/.local/bin:$PATH"
   cd ~/sky_workdir
-  
+
   uv sync
   source .venv/bin/activate
 

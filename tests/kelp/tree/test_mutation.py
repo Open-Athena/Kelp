@@ -255,7 +255,6 @@ def test_find_candidates_skips_root_functiondef(bank):
 def test_corruption_preserves_function_signature(bank):
     """After corruption, the top-level function name and args should survive."""
     source = CORPUS[0]  # fibonacci
-    rng = random.Random(42)
 
     for seed in range(20):
         corrupted, mutations = corrupt_program(source, num_steps=3, bank=bank, rng=random.Random(seed))

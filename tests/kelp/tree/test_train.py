@@ -86,6 +86,7 @@ def train_cfg(model_cfg):
         batch_size=2,
         warmup_steps=1,
         log_interval=1,
+        wandb_project=None,  # skip W&B: no network/login in tests
     )
 
 
@@ -174,7 +175,6 @@ def test_generate_training_example(bank, tokenizer, train_cfg):
 
 def test_generate_training_example_many_programs(bank, tokenizer, train_cfg):
     """At least some programs should produce valid training examples."""
-    rng = random.Random(42)
     successes = 0
     for source in CORPUS:
         for seed in range(5):
