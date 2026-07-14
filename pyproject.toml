@@ -10,9 +10,6 @@ dependencies = [
     "egglog",
 ]
 
-[project.optional-dependencies]
-tpu = ["marin-core[tpu]; sys_platform == 'linux'"]
-
 [dependency-groups]
 dev = [
     "pytest",
