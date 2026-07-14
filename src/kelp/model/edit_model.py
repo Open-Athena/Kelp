@@ -46,13 +46,13 @@ from levanter.grug.attention import (
     attention as grug_attention,
 )
 
-from kelp.model.config import TreeDiffusionConfig
-from kelp.model.model import (
-    TreeDiffusionAttentionParams,
-    TreeDiffusionBlockParams,
-    _init_weight,
-    mlp,
+from kelp.model.config import EditModelConfig
+from kelp.model.layers import (
+    AttentionParams,
+    TransformerBlockParams,
+    init_weight,
     rms_norm,
+    swiglu_mlp,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,11 +70,11 @@ class EditModelParams:
 
     token_embed: jax.Array
     output_proj: jax.Array
-    blocks: tuple[TreeDiffusionBlockParams, ...]
+    blocks: tuple[TransformerBlockParams, ...]
     final_norm: jax.Array
 
 
-def init_edit_params(cfg: TreeDiffusionConfig, *, key: PRNGKeyArray) -> EditModelParams:
+def init_edit_params(cfg: EditModelConfig, *, key: PRNGKeyArray) -> EditModelParams:
     """Initialize edit model parameters.
 
     Args:
@@ -84,35 +84,35 @@ def init_edit_params(cfg: TreeDiffusionConfig, *, key: PRNGKeyArray) -> EditMode
     Returns:
         Initialized EditModelParams.
     """
-    head_dim = cfg.inferred_head_dim
+    head_dim = cfg.head_dim
     key, embed_key, out_key = random.split(key, 3)
     layer_keys = random.split(key, cfg.num_layers)
 
-    token_embed = _init_weight(embed_key, (cfg.vocab_size, cfg.hidden_dim), cfg.initializer_std)
-    output_proj = _init_weight(out_key, (cfg.hidden_dim, cfg.vocab_size), cfg.initializer_std)
+    token_embed = init_weight(embed_key, (cfg.vocab_size, cfg.hidden_dim), cfg.initializer_std)
+    output_proj = init_weight(out_key, (cfg.hidden_dim, cfg.vocab_size), cfg.initializer_std)
     final_norm = jnp.ones((cfg.hidden_dim,), dtype=jnp.float32)
 
-    blocks: list[TreeDiffusionBlockParams] = []
+    blocks: list[TransformerBlockParams] = []
     D, N, M, H, I = cfg.hidden_dim, cfg.num_heads, cfg.num_kv_heads, head_dim, cfg.intermediate_dim  # noqa: E741 -- matrix dims match D/N/M/H single-letter convention
 
     for i in range(cfg.num_layers):
         k_q, k_k, k_v, k_o, k_gate, k_up, k_down = random.split(layer_keys[i], 7)
 
-        attn = TreeDiffusionAttentionParams(
-            w_q=_init_weight(k_q, (D, N * H), cfg.initializer_std),
-            w_k=_init_weight(k_k, (D, M * H), cfg.initializer_std),
-            w_v=_init_weight(k_v, (D, M * H), cfg.initializer_std),
-            w_o=_init_weight(k_o, (N * H, D), cfg.initializer_std),
+        attn = AttentionParams(
+            w_q=init_weight(k_q, (D, N * H), cfg.initializer_std),
+            w_k=init_weight(k_k, (D, M * H), cfg.initializer_std),
+            w_v=init_weight(k_v, (D, M * H), cfg.initializer_std),
+            w_o=init_weight(k_o, (N * H, D), cfg.initializer_std),
         )
 
         blocks.append(
-            TreeDiffusionBlockParams(
+            TransformerBlockParams(
                 attn=attn,
                 rms_attn=jnp.ones((D,), dtype=jnp.float32),
                 rms_mlp=jnp.ones((D,), dtype=jnp.float32),
-                mlp_gate=_init_weight(k_gate, (D, I), cfg.initializer_std),
-                mlp_up=_init_weight(k_up, (D, I), cfg.initializer_std),
-                mlp_down=_init_weight(k_down, (I, D), cfg.initializer_std),
+                mlp_gate=init_weight(k_gate, (D, I), cfg.initializer_std),
+                mlp_up=init_weight(k_up, (D, I), cfg.initializer_std),
+                mlp_down=init_weight(k_down, (I, D), cfg.initializer_std),
             )
         )
 
@@ -136,7 +136,7 @@ def _make_causal_mask(seq_len: int) -> Float[Array, "S S"]:
 def forward(
     params: EditModelParams,
     token_ids: Int[Array, "B S"],
-    cfg: TreeDiffusionConfig,
+    cfg: EditModelConfig,
 ) -> Float[Array, "B S V"]:
     """Causal AR forward pass for edit prediction.
 
@@ -151,7 +151,7 @@ def forward(
         to predict the next token at each position.
     """
     compute_dtype = jnp.dtype(cfg.compute_dtype)
-    head_dim = cfg.inferred_head_dim
+    head_dim = cfg.head_dim
     _batch_size, seq_len = token_ids.shape
 
     hidden = params.token_embed[token_ids].astype(compute_dtype)
@@ -191,7 +191,7 @@ def forward(
         hidden = hidden + attn_out
 
         mlp_in = rms_norm(hidden, block.rms_mlp, cfg.layer_norm_eps)
-        mlp_out = mlp(block, mlp_in)
+        mlp_out = swiglu_mlp(mlp_in, block.mlp_gate, block.mlp_up, block.mlp_down)
         hidden = hidden + mlp_out
         return hidden
 
@@ -210,7 +210,7 @@ def ar_loss(
     params: EditModelParams,
     token_ids: Int[Array, "B S"],
     loss_mask: Float[Array, "B S"],
-    cfg: TreeDiffusionConfig,
+    cfg: EditModelConfig,
 ) -> tuple[Float[Array, ""], dict]:
     """Compute AR cross-entropy loss on edit predictions.
 

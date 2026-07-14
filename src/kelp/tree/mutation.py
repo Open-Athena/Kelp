@@ -28,12 +28,8 @@ import logging
 import random
 from dataclasses import dataclass
 
-from kelp.tree.subtree_bank import (
-    EXTRACTABLE_TYPES,
-    STATEMENT_TYPES,
-    SubtreeBank,
-    count_statements,
-)
+from kelp.tree.ast_positions import PositionedNode, iter_editable_nodes
+from kelp.tree.subtree_bank import STATEMENT_TYPES, SubtreeBank
 
 logger = logging.getLogger(__name__)
 
@@ -66,71 +62,20 @@ class Mutation:
         return source[: self.start] + self.replacement + source[self.end :]
 
 
-def _linecol_to_offset(source: str, line: int, col: int) -> int:
-    """Convert 1-based line and 0-based column to a character offset.
-
-    Args:
-        source: The source string.
-        line: 1-based line number (as returned by ast nodes).
-        col: 0-based column offset.
-
-    Returns:
-        0-based character offset into source.
-    """
-    current_line = 1
-    offset = 0
-    for i, ch in enumerate(source):
-        if current_line == line:
-            return i + col
-        if ch == "\n":
-            current_line += 1
-    return offset + col
-
-
-def _node_source_span(source: str, node: ast.AST) -> tuple[int, int] | None:
-    """Get the (start, end) character offsets for an AST node.
-
-    Returns None if the node lacks position info.
-    """
-    if not hasattr(node, "lineno") or not hasattr(node, "end_lineno"):
-        return None
-    if node.end_lineno is None or node.end_col_offset is None:  # type: ignore[attr-defined]  # position attrs guarded by hasattr above
-        return None
-
-    start = _linecol_to_offset(source, node.lineno, node.col_offset)  # type: ignore[attr-defined]
-    end = _linecol_to_offset(source, node.end_lineno, node.end_col_offset)  # type: ignore[attr-defined]
-    return (start, end)
-
-
-@dataclass
-class _Candidate:
-    """A candidate AST node for mutation."""
-
-    node: ast.AST
-    node_type: str
-    start: int
-    end: int
-    stmt_count: int
-
-
 def _find_candidates(
     source: str,
     tree: ast.Module,
     max_edit_stmts: int,
     bank: SubtreeBank,
-) -> list[_Candidate]:
+) -> list[PositionedNode]:
     """Find all AST nodes eligible for mutation.
 
-    A node is eligible if:
-    1. Its type is in EXTRACTABLE_TYPES.
-    2. Its statement count is <= max_edit_stmts.
+    Starts from the shared editable-node set (extractable type, valid position,
+    ``stmt_count <= max_edit_stmts``) and adds the mutation-specific filters:
     3. The bank has replacement candidates of the same type.
-    4. It has valid source position info.
     5. Its source segment is non-trivial (>= 5 chars).
     6. It is not a root-level node (direct child of Module.body).
     """
-    candidates = []
-
     # Skip root-level nodes to prevent catastrophic corruption that replaces
     # entire top-level definitions. For single-function programs (the common
     # case in our corpus), replacing the root FunctionDef effectively requires
@@ -138,36 +83,15 @@ def _find_candidates(
     # local edits. See DIAGNOSTIC_REPORT.md Finding 1.
     root_node_ids = {id(node) for node in tree.body}
 
-    for node in ast.walk(tree):
-        type_name = type(node).__name__
-        if type_name not in EXTRACTABLE_TYPES:
+    candidates = []
+    for pn in iter_editable_nodes(source, tree, max_edit_stmts):
+        if id(pn.node) in root_node_ids:
             continue
-        if id(node) in root_node_ids:
+        if not bank.has_type(pn.node_type):
             continue
-        if not bank.has_type(type_name):
+        if pn.end - pn.start < 5:
             continue
-
-        span = _node_source_span(source, node)
-        if span is None:
-            continue
-
-        start, end = span
-        if end - start < 5:
-            continue
-
-        stmt_count = count_statements(node)
-        if stmt_count > max_edit_stmts:
-            continue
-
-        candidates.append(
-            _Candidate(
-                node=node,
-                node_type=type_name,
-                start=start,
-                end=end,
-                stmt_count=stmt_count,
-            )
-        )
+        candidates.append(pn)
 
     return candidates
 
@@ -209,7 +133,7 @@ def random_mutation(
     # The paper's improved variant: sample a node type first (uniform over
     # types), then sample a node of that type. This avoids bias toward types
     # that appear many times in a single program.
-    type_to_candidates: dict[str, list[_Candidate]] = {}
+    type_to_candidates: dict[str, list[PositionedNode]] = {}
     for c in candidates:
         if c.node_type not in type_to_candidates:
             type_to_candidates[c.node_type] = []
@@ -254,6 +178,17 @@ def random_mutation(
     return None
 
 
+def _leading_whitespace(s: str) -> str:
+    """Return the run of leading spaces/tabs at the start of ``s``."""
+    n = 0
+    for ch in s:
+        if ch in (" ", "\t"):
+            n += 1
+        else:
+            break
+    return s[:n]
+
+
 def _match_indentation(source: str, insert_offset: int, replacement: str, node_type: str) -> str:
     """Adjust indentation of the replacement to match the insertion point.
 
@@ -266,24 +201,14 @@ def _match_indentation(source: str, insert_offset: int, replacement: str, node_t
 
     # Find the indentation of the line at insert_offset.
     line_start = source.rfind("\n", 0, insert_offset) + 1
-    target_indent = ""
-    for ch in source[line_start:insert_offset]:
-        if ch in (" ", "\t"):
-            target_indent += ch
-        else:
-            break
+    target_indent = _leading_whitespace(source[line_start:insert_offset])
 
     # Determine the replacement's current base indentation (first line).
     repl_lines = replacement.split("\n")
     if not repl_lines:
         return replacement
 
-    repl_base_indent = ""
-    for ch in repl_lines[0]:
-        if ch in (" ", "\t"):
-            repl_base_indent += ch
-        else:
-            break
+    repl_base_indent = _leading_whitespace(repl_lines[0])
 
     # Re-indent: replace the base indentation with the target indentation.
     result_lines = []

@@ -1,18 +1,32 @@
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-# Copyright 2025 The Marin Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""Kelp model: transformer config, layers, the assembled autoregressive
+edit-prediction model, and checkpoint I/O."""
 
-"""Model architecture for Kelp tree diffusion."""
+from kelp.model.checkpointing import find_best_checkpoint, load_checkpoint, save_checkpoint
+from kelp.model.config import EditModelConfig
+from kelp.model.edit_model import EditModelParams, ar_loss, forward, init_edit_params
+from kelp.model.layers import (
+    AttentionParams,
+    TransformerBlockParams,
+    init_weight,
+    rms_norm,
+    swiglu_mlp,
+)
+
+__all__ = [
+    "EditModelConfig",
+    "EditModelParams",
+    "init_edit_params",
+    "forward",
+    "ar_loss",
+    "AttentionParams",
+    "TransformerBlockParams",
+    "rms_norm",
+    "swiglu_mlp",
+    "init_weight",
+    "save_checkpoint",
+    "load_checkpoint",
+    "find_best_checkpoint",
+]

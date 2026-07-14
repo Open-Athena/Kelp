@@ -37,13 +37,13 @@ import ast
 import logging
 from dataclasses import dataclass
 
-from kelp.tree.mutation import _linecol_to_offset
+from kelp.tree.ast_positions import iter_editable_nodes
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class TreeDiffusionTokenizer:
+class EditTokenizer:
     """Tokenizer for tree diffusion edit prediction.
 
     Wraps a base character/byte vocabulary and adds special tokens for
@@ -287,11 +287,6 @@ class TreeDiffusionTokenizer:
         Returns:
             Boolean mask over position token indices.
         """
-        from kelp.tree.subtree_bank import (
-            EXTRACTABLE_TYPES,
-            count_statements,
-        )
-
         mask = [False] * self.num_position_tokens
         num_context_tokens = len(source)
 
@@ -300,20 +295,8 @@ class TreeDiffusionTokenizer:
         except SyntaxError:
             return mask
 
-        for node in ast.walk(tree):
-            type_name = type(node).__name__
-            if type_name not in EXTRACTABLE_TYPES:
-                continue
-            if not hasattr(node, "lineno") or node.end_lineno is None:  # type: ignore[attr-defined]  # position attrs guarded by hasattr
-                continue
-
-            stmt_count = count_statements(node)
-            if stmt_count > max_edit_stmts:
-                continue
-
-            char_offset = _linecol_to_offset(source, node.lineno, node.col_offset)  # type: ignore[attr-defined]
-            token_idx = self.char_offset_to_token_index(source, char_offset)
-
+        for pn in iter_editable_nodes(source, tree, max_edit_stmts):
+            token_idx = self.char_offset_to_token_index(source, pn.start)
             if 0 <= token_idx < min(num_context_tokens, self.num_position_tokens):
                 mask[token_idx] = True
 

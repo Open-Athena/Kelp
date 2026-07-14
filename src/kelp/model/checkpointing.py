@@ -18,7 +18,7 @@
 """Checkpoint save/load for Kelp tree diffusion models.
 
 Checkpoints are stored as directories containing:
-- config.json: Model configuration (TreeDiffusionConfig as JSON)
+- config.json: Model configuration (EditModelConfig as JSON)
 - params.pkl: Model parameters as pickled JAX arrays
 """
 
@@ -32,13 +32,13 @@ import jax
 import jax.numpy as jnp
 from levanter.grug.attention import RotaryConfig
 
-from kelp.model.config import TreeDiffusionConfig
-from kelp.tree.edit_model import EditModelParams
+from kelp.model.config import EditModelConfig
+from kelp.model.edit_model import EditModelParams
 
 logger = logging.getLogger(__name__)
 
 
-def save_checkpoint(params: EditModelParams, model_config: TreeDiffusionConfig, ckpt_dir: Path) -> None:
+def save_checkpoint(params: EditModelParams, model_config: EditModelConfig, ckpt_dir: Path) -> None:
     """Save model parameters and config to a checkpoint directory.
 
     Args:
@@ -61,7 +61,7 @@ def save_checkpoint(params: EditModelParams, model_config: TreeDiffusionConfig, 
     logger.info(f"Saved checkpoint to {ckpt_dir}")
 
 
-def load_checkpoint(ckpt_dir: Path) -> tuple[EditModelParams, TreeDiffusionConfig]:
+def load_checkpoint(ckpt_dir: Path) -> tuple[EditModelParams, EditModelConfig]:
     """Load model parameters and config from a checkpoint directory.
 
     Args:
@@ -85,7 +85,7 @@ def load_checkpoint(ckpt_dir: Path) -> tuple[EditModelParams, TreeDiffusionConfi
     elif rope_val is not None:
         config_dict["rope"] = rope_val
 
-    config = TreeDiffusionConfig(**config_dict)
+    config = EditModelConfig(**config_dict)
 
     with open(params_path, "rb") as f:
         params = pickle.load(f)

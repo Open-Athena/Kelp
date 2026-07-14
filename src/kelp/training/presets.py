@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from fray.cluster import ResourceConfig
 
-from kelp.model.config import TreeDiffusionConfig
+from kelp.model.config import EditModelConfig
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class ModelPreset:
     name: str
     """Human-readable name."""
 
-    config: TreeDiffusionConfig
+    config: EditModelConfig
     """Model configuration."""
 
     resource: ResourceConfig
@@ -58,7 +58,7 @@ def toy_preset() -> ModelPreset:
     """Tiny preset for unit testing (~1M params)."""
     return ModelPreset(
         name="toy",
-        config=TreeDiffusionConfig(
+        config=EditModelConfig(
             vocab_size=DEFAULT_VOCAB_SIZE,
             hidden_dim=64,
             intermediate_dim=256,
@@ -81,7 +81,7 @@ def overnight_cpu_preset() -> ModelPreset:
     """
     return ModelPreset(
         name="overnight_cpu",
-        config=TreeDiffusionConfig(
+        config=EditModelConfig(
             vocab_size=256,  # Byte-level tokenizer for faster training
             hidden_dim=256,
             intermediate_dim=1024,
@@ -101,7 +101,7 @@ def laptop_preset() -> ModelPreset:
     """Small preset for laptop development (~125M params)."""
     return ModelPreset(
         name="laptop",
-        config=TreeDiffusionConfig(
+        config=EditModelConfig(
             vocab_size=DEFAULT_VOCAB_SIZE,
             hidden_dim=512,
             intermediate_dim=2048,
@@ -121,7 +121,7 @@ def single_gpu_preset() -> ModelPreset:
     """Medium preset for single GPU (~300M params)."""
     return ModelPreset(
         name="single_gpu",
-        config=TreeDiffusionConfig(
+        config=EditModelConfig(
             vocab_size=DEFAULT_VOCAB_SIZE,
             hidden_dim=768,
             intermediate_dim=3072,
@@ -141,7 +141,7 @@ def tpu_v4_8_preset() -> ModelPreset:
     """Large preset for v4-8 TPU (~1B params)."""
     return ModelPreset(
         name="tpu_v4_8",
-        config=TreeDiffusionConfig(
+        config=EditModelConfig(
             vocab_size=DEFAULT_VOCAB_SIZE,
             hidden_dim=2048,
             intermediate_dim=8192,
@@ -161,7 +161,7 @@ def tpu_v5p_8_preset() -> ModelPreset:
     """8B preset for v5p-8 TPU pod (~8B params, matching Marin 8b)."""
     return ModelPreset(
         name="tpu_v5p_8",
-        config=TreeDiffusionConfig(
+        config=EditModelConfig(
             vocab_size=DEFAULT_VOCAB_SIZE,
             hidden_dim=4096,
             intermediate_dim=14336,

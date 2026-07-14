@@ -20,17 +20,17 @@
 import pytest
 
 from kelp.corpus import extract_docstring
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.tokenizer import EditTokenizer
 
 
 @pytest.fixture
 def tok():
-    return TreeDiffusionTokenizer(max_seq_len=512)
+    return EditTokenizer(max_seq_len=512)
 
 
 @pytest.fixture
 def tok_prompt():
-    return TreeDiffusionTokenizer(max_seq_len=512, prompt_tokens=True)
+    return EditTokenizer(max_seq_len=512, prompt_tokens=True)
 
 
 def test_special_token_ids_are_distinct(tok):
@@ -297,7 +297,7 @@ def test_decode_source_skips_prompt_tokens(tok_prompt):
 
 def test_backward_compat_legacy_tokenizer():
     """Legacy tokenizer (prompt_tokens=False) has unchanged behavior."""
-    tok = TreeDiffusionTokenizer(max_seq_len=128)
+    tok = EditTokenizer(max_seq_len=128)
     assert tok.num_special_tokens == 3
     assert tok.position_token_offset == 3
     assert tok.vocab_size == 3 + 128 + 256

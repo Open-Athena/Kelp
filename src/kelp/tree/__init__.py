@@ -1,22 +1,32 @@
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-# Copyright 2025 The Marin Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""Kelp tree layer: AST representation and corruption.
 
-"""Tree representation layer for Kelp.
-
-Provides tree-sitter integration, S-expression serialization, and grammar
-constraints for logit masking.
+Holds the forward (corruption) process over Python ASTs — the SubtreeBank of
+replacement fragments, the mutation operators that swap type-compatible
+subtrees, the minimal edit-path (TreeDiff) back to a clean program, source
+tokenization, and bank augmentation. Every operation preserves syntactic
+validity: each intermediate program is valid Python.
 """
+
+from kelp.tree.augmentation import augment_bank
+from kelp.tree.mutation import Mutation, corrupt_program, random_mutation
+from kelp.tree.subtree_bank import EXTRACTABLE_TYPES, SubtreeBank, SubtreeEntry
+from kelp.tree.tokenizer import EditTokenizer
+from kelp.tree.tree_diff import Edit, find_path, one_step_edit, tree_diff
+
+__all__ = [
+    "SubtreeBank",
+    "SubtreeEntry",
+    "EXTRACTABLE_TYPES",
+    "Mutation",
+    "corrupt_program",
+    "random_mutation",
+    "Edit",
+    "tree_diff",
+    "find_path",
+    "one_step_edit",
+    "EditTokenizer",
+    "augment_bank",
+]

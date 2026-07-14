@@ -40,7 +40,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Float
 
 from kelp.tree.mutation import Mutation
-from kelp.tree.tokenizer import TreeDiffusionTokenizer
+from kelp.tree.tokenizer import EditTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ def brackets_balanced(text: str) -> bool:
 
 def compute_bracket_mask(
     partial_replacement: str,
-    tokenizer: TreeDiffusionTokenizer,
+    tokenizer: EditTokenizer,
 ) -> Float[Array, "V"]:
     """Compute a soft mask that encourages bracket balancing.
 
@@ -140,8 +140,7 @@ def sample_edit_with_validation(
     edit_position: int,
     original_span_end: int,
     replacement_tokens: list[int],
-    tokenizer: TreeDiffusionTokenizer,
-    max_retries: int = 5,
+    tokenizer: EditTokenizer,
 ) -> Mutation | None:
     """Decode replacement tokens and validate the resulting edit.
 
@@ -155,8 +154,6 @@ def sample_edit_with_validation(
         original_span_end: Character offset where the original span ends.
         replacement_tokens: Token IDs for the replacement (excluding POS/EOS).
         tokenizer: Tokenizer for decoding.
-        max_retries: Not used here (validation is a single check), but
-            kept for API compatibility with retry-based approaches.
 
     Returns:
         A valid Mutation, or None if the edit produces invalid Python.
@@ -180,7 +177,7 @@ def sample_edit_with_validation(
 def apply_bracket_constraints(
     logits: Float[Array, "V"],
     partial_replacement: str,
-    tokenizer: TreeDiffusionTokenizer,
+    tokenizer: EditTokenizer,
 ) -> Float[Array, "V"]:
     """Apply bracket-balancing constraints to logits.
 

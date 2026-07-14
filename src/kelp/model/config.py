@@ -24,7 +24,7 @@ from levanter.grug.attention import RotaryConfig
 
 
 @dataclass(frozen=True)
-class TreeDiffusionConfig:
+class EditModelConfig:
     """Configuration for tree diffusion models.
 
     This follows the grugformer pattern of using simple dataclasses rather than
@@ -49,8 +49,10 @@ class TreeDiffusionConfig:
     num_kv_heads: int = 8
     """Number of key-value heads (for GQA). Set equal to num_heads for MHA."""
 
-    head_dim: int | None = None
-    """Per-head dimension. If None, computed as hidden_dim // num_heads."""
+    head_dim_override: int | None = None
+    """Explicit per-head dimension. If None, ``head_dim`` computes it as
+    hidden_dim // num_heads. Read the resolved value via the ``head_dim``
+    property, never this raw field."""
 
     max_seq_len: int = 2048
     """Maximum sequence length."""
@@ -82,17 +84,17 @@ class TreeDiffusionConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration."""
-        if self.hidden_dim % self.num_heads != 0 and self.head_dim is None:
+        if self.hidden_dim % self.num_heads != 0 and self.head_dim_override is None:
             raise ValueError(
                 f"hidden_dim={self.hidden_dim} must be divisible by "
-                f"num_heads={self.num_heads}, or set head_dim explicitly"
+                f"num_heads={self.num_heads}, or set head_dim_override explicitly"
             )
         if self.num_heads % self.num_kv_heads != 0:
             raise ValueError(f"num_heads={self.num_heads} must be divisible by num_kv_heads={self.num_kv_heads}")
 
     @property
-    def inferred_head_dim(self) -> int:
-        """Get per-head dimension."""
-        if self.head_dim is not None:
-            return self.head_dim
+    def head_dim(self) -> int:
+        """Resolved per-head dimension (``head_dim_override`` or hidden_dim // num_heads)."""
+        if self.head_dim_override is not None:
+            return self.head_dim_override
         return self.hidden_dim // self.num_heads

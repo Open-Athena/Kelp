@@ -31,7 +31,8 @@ import ast
 import logging
 from dataclasses import dataclass
 
-from kelp.tree.mutation import Mutation, _node_source_span
+from kelp.tree.ast_positions import node_source_span
+from kelp.tree.mutation import Mutation
 from kelp.tree.subtree_bank import count_statements
 
 logger = logging.getLogger(__name__)
@@ -134,8 +135,8 @@ def _diff_nodes(
     source_stmts = count_statements(source_node)
     target_stmts = count_statements(target_node)
 
-    source_span = _node_source_span(source, source_node)
-    target_span = _node_source_span(target, target_node)
+    source_span = node_source_span(source, source_node)
+    target_span = node_source_span(target, target_node)
 
     # Try to descend into children to find more specific diffs.
     # We match children by field name (the AST's structural slots).

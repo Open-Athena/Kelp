@@ -520,14 +520,8 @@ def augment_bank(
     Returns:
         New SubtreeBank with original entries plus augmented entries.
     """
-    augmented = SubtreeBank()
-    seen: set[tuple[str, str]] = set()
-
-    # Copy originals.
-    for node_type, entries in bank.entries.items():
-        for entry in entries:
-            augmented.add(entry)
-            seen.add((node_type, entry.source))
+    augmented = bank.copy()
+    seen: set[tuple[str, str]] = augmented.source_keys()
 
     original_count = augmented.total_entries
     renamed_count = 0

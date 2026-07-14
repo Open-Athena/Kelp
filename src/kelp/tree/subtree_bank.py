@@ -149,6 +149,21 @@ class SubtreeBank:
             self.entries[entry.node_type] = []
         self.entries[entry.node_type].append(entry)
 
+    def copy(self) -> "SubtreeBank":
+        """Return a shallow copy: a new bank whose per-type lists are independent.
+
+        Entries themselves are immutable and shared; only the containing lists
+        are copied, so adding to the copy never mutates the original.
+        """
+        return SubtreeBank(entries={node_type: list(entries) for node_type, entries in self.entries.items()})
+
+    def source_keys(self) -> set[tuple[str, str]]:
+        """Return the set of ``(node_type, source)`` pairs currently in the bank.
+
+        Useful as a dedup seed when augmenting a bank with generated variants.
+        """
+        return {(node_type, entry.source) for node_type, entries in self.entries.items() for entry in entries}
+
     def sample(self, node_type: str, rng: random.Random) -> SubtreeEntry | None:
         """Sample a random subtree of the given AST node type.
 
