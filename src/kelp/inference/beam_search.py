@@ -48,6 +48,12 @@ from kelp.tree.tokenizer import EditTokenizer
 
 logger = logging.getLogger(__name__)
 
+# Compile the forward pass once and reuse it across every autoregressive step.
+# cfg is a static (hashable) argument; inputs are padded to a fixed length in
+# _ar_generate_tokens so only a single input shape is ever compiled. This turns
+# per-step decoding from eager op-by-op dispatch into a cached compiled call.
+_forward_jit = jax.jit(forward, static_argnums=(2,))
+
 
 @dataclass(frozen=True)
 class BeamCandidate:
@@ -98,16 +104,21 @@ def _ar_generate_tokens(
     current_ids = context_token_ids + [tokenizer.sos_token_id]
     generated: list[int] = []
     total_log_prob = 0.0
+    max_len = cfg.max_seq_len
 
     for step in range(max_new_tokens):
         key, sample_key = jax.random.split(key)
 
-        # Run full forward pass (no KV cache for simplicity).
-        input_ids = jnp.array([current_ids], dtype=jnp.int32)
-        logits = forward(params, input_ids, cfg)
+        # Pad to a fixed length (max_seq_len) so the compiled forward sees one
+        # input shape and is reused every step. Padding is masked out in
+        # attention, so logits at the real positions are unchanged — read the
+        # true last token at seq_len - 1 rather than -1. (No KV cache yet.)
+        seq_len = len(current_ids)
+        padded = current_ids + [cfg.pad_token_id] * (max_len - seq_len)
+        input_ids = jnp.array([padded], dtype=jnp.int32)
+        logits = _forward_jit(params, input_ids, cfg)
 
-        # Take logits at the last position.
-        next_logits = logits[0, -1, :]
+        next_logits = logits[0, seq_len - 1, :]
 
         # Apply bracket constraints on replacement tokens (not on POS token).
         if step > 0:
