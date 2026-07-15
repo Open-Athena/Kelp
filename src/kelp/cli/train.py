@@ -188,7 +188,7 @@ def main():
         output_dir=args.output_dir,
         seed=args.seed,
         wandb_entity=args.wandb_entity,
-        wandb_project=args.wandb_project,
+        wandb_project=args.wandb_project or None,  # empty string disables W&B
         wandb_run_name=args.wandb_run_name,
         max_corruption_steps=args.max_corruption_steps,
         corruption_curriculum=args.corruption_curriculum,
