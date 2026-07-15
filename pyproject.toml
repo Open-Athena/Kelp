@@ -8,6 +8,8 @@ dependencies = [
     "marin-core>=0.2.46.dev202607131620",
     "marin-levanter>=0.2.46.dev202607131620",
     "egglog",
+    "marin-zephyr>=0.2.46.dev202607131620",
+    "marin-iris>=0.2.46.dev202607131620",
 ]
 
 [project.scripts]

@@ -2107,7 +2107,9 @@ source = { editable = "." }
 dependencies = [
     { name = "egglog" },
     { name = "marin-core" },
+    { name = "marin-iris" },
     { name = "marin-levanter" },
+    { name = "marin-zephyr" },
 ]
 
 [package.dev-dependencies]
@@ -2122,7 +2124,9 @@ dev = [
 requires-dist = [
     { name = "egglog" },
     { name = "marin-core", specifier = ">=0.2.46.dev202607131620" },
+    { name = "marin-iris", specifier = ">=0.2.46.dev202607131620" },
     { name = "marin-levanter", specifier = ">=0.2.46.dev202607131620" },
+    { name = "marin-zephyr", specifier = ">=0.2.46.dev202607131620" },
 ]
 
 [package.metadata.requires-dev]
