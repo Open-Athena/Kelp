@@ -121,13 +121,40 @@ best = find_best_checkpoint("gs://<bucket>/kelp/v8/")
 params, config = load_checkpoint(best)
 ```
 
+## Data loader
+
+By default examples are generated inline (single process). For TPU runs, add
+`--data-loader streaming` to `kelp-train` (forwarded through `kelp-launch`) to
+generate examples concurrently across CPU worker processes and keep the
+accelerator fed:
+
+```bash
+kelp-launch --preset tpu_v5p_8 --submit --image gcr.io/<project>/kelp:latest \
+  -- --steps 50000 --output-dir gs://<bucket>/kelp/v8/ \
+     --data-loader streaming --gen-workers 8 --reuse-factor 1
+```
+
+- `--gen-workers` — CPU generation processes (default: `cpu_count - 2`).
+- `--reuse-factor` — times each generated example is fed before eviction. `1`
+  is pure fresh streaming (max diversity); raise it for smaller/faster-step
+  models whose TPU step outpaces generation, to amortize CPU cost.
+- `--buffer-size` — shuffle-buffer capacity.
+
+Nothing is materialized: the corpus + `SubtreeBank` are the only stored inputs,
+and a run reproduces from `(corpus, seed, code)`. The generative space (programs
+× corruption seeds × subtree-bank samples × path steps) far exceeds any stored
+set, so diversity is effectively unbounded.
+
 ## Current limitations / roadmap
 
-- **Data generation is still inline.** Training examples are generated on the
-  training host's CPU per step. For the 8B/v5p target a handful of cores keep the
-  TPU fed, but smaller/faster-step models can starve. Distributed data-generation
-  (streaming synthesis over the corpus) is tracked as phase 2 — see the Zephyr
-  data-pipeline issues.
+- **Generation runs on the training host's CPUs.** For the 8B/v5p target a
+  handful of cores keep the TPU fed; smaller/faster-step models may need more
+  cores than the host has, or `--reuse-factor > 1`. An Iris actor-pool backend
+  (generation on separate hosts) is a tracked follow-up.
+- **Multi-host batch assembly.** The streaming loader derives a disjoint
+  per-process seed stream, but currently yields a full per-process batch;
+  local→global batch assembly for true multi-host data parallelism is a
+  follow-up (coordinates with the sharding work).
 - **Checkpointing is synchronous.** The GCS write blocks the step it fires on.
   Async checkpointing (overlapping the write with subsequent steps via a
   persistent Orbax `CheckpointManager`), plus replica-parallel save and
