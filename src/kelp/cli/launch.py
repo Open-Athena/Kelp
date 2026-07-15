@@ -78,12 +78,17 @@ def build_job_request(
     command_args = ["-m", "kelp.cli.train", "--preset", preset_name, *train_args]
     entrypoint = Entrypoint.from_binary("python", command_args)
 
+    # TPU jobs need JAX's TPU backend (libtpu). It lives in the `tpu` optional
+    # dependency (linux-only), so request that extra when the slice is a TPU;
+    # otherwise the worker's synced venv has CPU-only JAX and cannot see chips.
+    extras = ["tpu"] if getattr(resources.device, "kind", None) == "tpu" else []
+
     # Named vars are forwarded from the current environment (iris does not copy
     # the shell env). create_environment also injects HF_TOKEN / WANDB_API_KEY
     # by default, and -- absent an --image -- syncs the local workspace so a
     # laptop launch runs your current checkout.
     env_vars = {k: environ[k] for k in env_names if k in environ}
-    environment = create_environment(docker_image=image, env_vars=env_vars)
+    environment = create_environment(docker_image=image, env_vars=env_vars, extras=extras)
 
     return JobRequest(
         name=name,

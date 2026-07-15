@@ -45,6 +45,18 @@ def test_defaults_to_local_workspace_without_image():
     assert req.environment.workspace is not None
 
 
+def test_tpu_preset_requests_tpu_extra():
+    """TPU jobs must install JAX's TPU backend, requested via the `tpu` extra."""
+    req = build_job_request("tpu_smoke", [], name="kelp-test", environ={})
+    assert "tpu" in req.environment.extras
+
+
+def test_cpu_preset_omits_tpu_extra():
+    """Non-TPU presets do not drag in the linux-only TPU extra."""
+    req = build_job_request("toy", [], name="kelp-test", environ={})
+    assert "tpu" not in req.environment.extras
+
+
 def test_image_when_provided():
     """An explicit image is used instead of a workspace sync."""
     req = build_job_request("tpu_v5p_8", [], name="kelp-test", image="gcr.io/x/kelp:latest", environ={})
