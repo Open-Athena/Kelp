@@ -34,6 +34,7 @@ Usage:
 
 import argparse
 import logging
+import os
 import random
 import sys
 from dataclasses import replace
@@ -113,6 +114,32 @@ def parse_args() -> argparse.Namespace:
         default=0.5,
         help="Probability of including a docstring prompt when available (default: 0.5)",
     )
+    parser.add_argument(
+        "--data-loader",
+        type=str,
+        default="inline",
+        choices=["inline", "streaming"],
+        help="Data pipeline: 'inline' (single-process, default) or 'streaming' "
+        "(concurrent seed-driven generation; keeps fast accelerators fed)",
+    )
+    parser.add_argument(
+        "--gen-workers",
+        type=int,
+        default=None,
+        help="Streaming: CPU generation processes (default: cpu_count-2). Ignored for inline.",
+    )
+    parser.add_argument(
+        "--reuse-factor",
+        type=int,
+        default=1,
+        help="Streaming: times each generated example is fed before eviction (default: 1)",
+    )
+    parser.add_argument(
+        "--buffer-size",
+        type=int,
+        default=1024,
+        help="Streaming: shuffle-buffer capacity in examples (default: 1024)",
+    )
     return parser.parse_args()
 
 
@@ -169,13 +196,29 @@ def main():
         p_prompt=args.p_prompt,
     )
 
-    data_iter = create_edit_data_iter(
-        corpus=corpus,
-        bank=bank,
-        tokenizer=tokenizer,
-        config=train_cfg,
-        seed=args.seed,
-    )
+    if args.data_loader == "streaming":
+        from kelp.training.streaming import create_streaming_data_iter
+
+        workers = args.gen_workers if args.gen_workers is not None else max(1, (os.cpu_count() or 2) - 2)
+        logger.info(f"Streaming dataloader: {workers} gen workers, reuse={args.reuse_factor}")
+        data_iter = create_streaming_data_iter(
+            corpus=corpus,
+            bank=bank,
+            tokenizer=tokenizer,
+            config=train_cfg,
+            seed=args.seed,
+            num_workers=workers,
+            reuse_factor=args.reuse_factor,
+            buffer_size=args.buffer_size,
+        )
+    else:
+        data_iter = create_edit_data_iter(
+            corpus=corpus,
+            bank=bank,
+            tokenizer=tokenizer,
+            config=train_cfg,
+            seed=args.seed,
+        )
 
     logger.info(f"Training config: {train_cfg}")
     logger.info(f"Model config: {model_config}")
