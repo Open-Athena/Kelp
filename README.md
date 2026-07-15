@@ -113,6 +113,10 @@ Programs are evaluated by:
 | `laptop` | 512 | 6 | 8 | ~125M | Laptop (multi-day) |
 | `single_gpu` | 768 | 12 | 12 | ~300M | 1x A100 |
 | `tpu_v4_8` | 2048 | 24 | 16 | ~1B | TPU v4-8 |
+| `tpu_v5p_8` | 4096 | 32 | 32 | ~8B | TPU v5p-8 |
+
+TPU presets train data-parallel across the slice's chips and can be launched on
+Marin/Iris with `kelp-launch` — see [docs/training-tpu.md](docs/training-tpu.md).
 
 ## Experiment History
 
@@ -255,16 +259,19 @@ kelp/
 │   │   ├── config.py          # EditModelConfig (includes prompt_tokens flag)
 │   │   ├── layers.py          # Shared transformer primitives (rms_norm, swiglu_mlp, params)
 │   │   ├── edit_model.py      # The assembled causal edit-prediction transformer (Grug blocks)
-│   │   └── checkpointing.py   # Checkpoint save/load
+│   │   └── checkpointing.py   # Orbax/TensorStore checkpoints (local or gs://)
 │   ├── inference/             # Iterative repair (the reverse process)
 │   │   ├── beam_search.py     # best-of-N, beam search, prompt support
 │   │   ├── reranking.py       # Execution-guided reranking
 │   │   └── constrained_decoding.py  # Bracket-constrained generation
 │   ├── training/              # Training engine + presets
 │   │   ├── engine.py          # Training loop (corruption → TreeDiff → loss)
+│   │   ├── sharding.py        # Data-parallel device mesh (batch sharded, state replicated)
+│   │   ├── distributed.py     # JAX distributed bootstrap from Iris (no-op off-cluster)
 │   │   └── presets.py         # Hardware/size presets + cluster resources
 │   └── cli/                   # Command-line entry points (python -m kelp.cli.<x> / console scripts)
 │       ├── train.py           # Training CLI (presets, W&B, prompt conditioning)
+│       ├── launch.py          # Launch a TPU run on Marin/Iris (kelp-launch)
 │       ├── evaluate.py        # Eval on hand-crafted tasks
 │       ├── evaluate_corpus.py # Held-out corpus repair evaluation
 │       ├── evaluate_mbpp.py   # MBPP benchmark evaluation
@@ -274,13 +281,14 @@ kelp/
 ├── scripts/                  # train_v7.sh and other helper scripts
 └── docs/
     ├── kelp.md               # Original research proposal
+    ├── training-tpu.md       # Training on TPU via Marin/Iris (kelp-launch)
     └── DIAGNOSTIC_REPORT.md   # Analysis of v3 failure modes
 ```
 
 ## Usage
 
 The commands below use `python -m kelp.cli.<name>`; installing the package also
-provides equivalent console scripts (`kelp-train`, `kelp-evaluate`,
+provides equivalent console scripts (`kelp-train`, `kelp-launch`, `kelp-evaluate`,
 `kelp-evaluate-corpus`, `kelp-evaluate-mbpp`, `kelp-prepare-corpus`).
 
 As a library, `import kelp` re-exports the primary API across the pipeline —
@@ -351,6 +359,24 @@ rsync -avz kelp-v7:~/sky_workdir/checkpoints/kelp-edit-v7/ checkpoints/kelp-edit
 sky down kelp-v7 -y
 ```
 
+### TPU training via Marin/Iris
+
+TPU presets launch on Marin's Iris compute with `kelp-launch`. Dry-run is the
+default; add `--submit` to launch. Checkpoints go straight to GCS.
+
+```bash
+# Inspect the launch plan (nothing submitted):
+kelp-launch --preset tpu_v5p_8 -- --steps 50000 --wandb-project kelp
+
+# Submit to the cluster with a worker image and a GCS checkpoint dir:
+kelp-launch --preset tpu_v5p_8 --submit \
+  --image gcr.io/<project>/kelp:latest \
+  -- --steps 50000 --wandb-project kelp --output-dir gs://<bucket>/kelp/v8/
+```
+
+See [docs/training-tpu.md](docs/training-tpu.md) for the worker image, auth,
+sharding, and monitoring details.
+
 ## Roadmap & Contributing
 
 Kelp is an open research project, originally incubated within the [Marin project](https://marin.community/) and now developed as a standalone repository. Contributions are welcome — here's what's ahead and how to help.
@@ -373,7 +399,11 @@ Kelp is an open research project, originally incubated within the [Marin project
 - Transfer from Marin's pretrained 8B model into a tree diffusion model (the original vision from [kelp.md](docs/kelp.md))
 - Support multi-language tree diffusion (TypeScript, Rust) by swapping the AST parser
 - Condition on richer prompts (test cases, type signatures, natural language specs)
-- Scale to TPU pods using Marin's Ray-based executor infrastructure
+- Scale data-generation to keep fast TPUs fed — distributed streaming synthesis over the corpus (Zephyr), so the model never starves waiting on single-host AST work
+
+TPU pod training itself is implemented: data-parallel sharding, Iris↔JAX
+distributed init, GCS/Orbax checkpoints, and a `kelp-launch` submission
+entrypoint — see [docs/training-tpu.md](docs/training-tpu.md).
 
 ### How to Contribute
 
