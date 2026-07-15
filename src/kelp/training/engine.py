@@ -29,11 +29,11 @@ import math
 import random as pyrandom
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import optax
+from etils import epath
 from jax.tree_util import register_dataclass
 from jaxtyping import Array
 
@@ -48,6 +48,12 @@ from kelp.model.edit_model import (
 from kelp.model.layers import (
     AttentionParams,
     TransformerBlockParams,
+)
+from kelp.training.sharding import (
+    data_parallel_size,
+    make_data_parallel_mesh,
+    replicate,
+    shard_batch,
 )
 from kelp.tree.mutation import corrupt_program
 from kelp.tree.subtree_bank import SubtreeBank
@@ -410,6 +416,7 @@ def train_edit_model(
     data_iter: Iterator[dict[str, Array]],
     initial_params: EditModelParams | None = None,
     log_callback: LogCallback | None = None,
+    mesh: "jax.sharding.Mesh | None" = None,
 ) -> EditModelParams:
     """Train a tree diffusion edit model.
 
@@ -418,10 +425,24 @@ def train_edit_model(
         data_iter: Iterator yielding batches with 'token_ids' and 'loss_mask'.
         initial_params: Optional initial parameters (for transfer learning).
         log_callback: Optional callback for logging metrics.
+        mesh: Optional device mesh for data-parallel training. Defaults to a
+            1-D mesh over all local devices. On a single device this is a
+            no-op; on an N-chip host the batch is sharded across chips and the
+            JITted step runs SPMD with automatic gradient all-reduce.
 
     Returns:
         Trained EditModelParams.
     """
+    if mesh is None:
+        mesh = make_data_parallel_mesh()
+    dp_size = data_parallel_size(mesh)
+    if config.batch_size % dp_size != 0:
+        raise ValueError(
+            f"batch_size ({config.batch_size}) must be divisible by the "
+            f"data-parallel size ({dp_size} devices) for even sharding."
+        )
+    logger.info(f"Data-parallel mesh: {dp_size} device(s), batch/device={config.batch_size // dp_size}")
+
     key = jax.random.PRNGKey(config.seed)
     optimizer = create_edit_optimizer(config)
 
@@ -451,13 +472,16 @@ def train_edit_model(
 
     opt_state = optimizer.init(params)
     state = EditTrainingState(step=0, params=params, opt_state=opt_state, key=key)
+    # Replicate the training state across all devices; the JITted step then
+    # runs data-parallel over batch-sharded inputs.
+    state = replicate(state, mesh)
 
     train_step = make_edit_train_step(config.model, optimizer)
 
     logger.info(f"Starting edit model training for {config.total_steps} steps")
 
     for step in range(config.total_steps):
-        batch = next(data_iter)
+        batch = shard_batch(next(data_iter), mesh)
         state, metrics = train_step(state, batch)
 
         if step % config.log_interval == 0:
@@ -471,12 +495,12 @@ def train_edit_model(
                 log_callback(step, metrics)
 
         if config.output_dir and config.checkpoint_interval > 0 and (step + 1) % config.checkpoint_interval == 0:
-            ckpt_dir = Path(config.output_dir) / f"step-{step + 1:06d}"
+            ckpt_dir = epath.Path(config.output_dir) / f"step-{step + 1:06d}"
             save_checkpoint(state.params, config.model, ckpt_dir)
 
     # Save final checkpoint.
     if config.output_dir:
-        ckpt_dir = Path(config.output_dir) / f"step-{config.total_steps:06d}"
+        ckpt_dir = epath.Path(config.output_dir) / f"step-{config.total_steps:06d}"
         save_checkpoint(state.params, config.model, ckpt_dir)
 
     if wandb_run is not None:

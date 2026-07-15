@@ -35,6 +35,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add pad_token_id to TreeDiffusionConfig instead of hardcoding 0 (#9)
 
 ### Changed
+- GCS-backed checkpointing for ephemeral containers (#116)
+- Iris submission entrypoint (consume preset.resource) (#117)
+- Iris<->JAX distributed init via Levanter (#115)
+- Data-parallel sharding in the train step (#114)
+- Reconcile the corruption curriculum with offline generation (design decision) (#123)
 - Consolidate dead code: remove unused modules, extract shared corpus and checkpointing (#48)
 - Update training pipeline for tree diffusion with TreeDiff supervision (#34)
 - Replace bidirectional parallel prediction with causal AR edit prediction (#32)

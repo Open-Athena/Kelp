@@ -87,6 +87,7 @@ def train_cfg(model_cfg):
         warmup_steps=1,
         log_interval=1,
         wandb_project=None,  # skip W&B: no network/login in tests
+        output_dir="",  # skip checkpoint writes: checkpointing has its own tests
     )
 
 

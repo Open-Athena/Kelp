@@ -39,6 +39,7 @@ import sys
 from dataclasses import replace
 
 from kelp.corpus import TOY_CORPUS, load_corpus
+from kelp.training.distributed import bootstrap_distributed
 from kelp.training.engine import (
     EditTrainingConfig,
     create_edit_data_iter,
@@ -118,6 +119,10 @@ def parse_args() -> argparse.Namespace:
 def main():
     """Main entry point."""
     args = parse_args()
+
+    # Bring up JAX distributed from Iris job metadata before any device use.
+    # No-op off-cluster (laptop/CI/single host).
+    bootstrap_distributed()
 
     preset = get_preset(args.preset)
     model_config = preset.config
