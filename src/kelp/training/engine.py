@@ -37,7 +37,6 @@ from etils import epath
 from jax.tree_util import register_dataclass
 from jaxtyping import Array
 
-from kelp.corpus import extract_docstring
 from kelp.model.checkpointing import save_checkpoint
 from kelp.model.config import EditModelConfig
 from kelp.model.edit_model import (
@@ -49,16 +48,15 @@ from kelp.model.layers import (
     AttentionParams,
     TransformerBlockParams,
 )
+from kelp.training.generation import GenerationConfig, generate_example
 from kelp.training.sharding import (
     data_parallel_size,
     make_data_parallel_mesh,
     replicate,
     shard_batch,
 )
-from kelp.tree.mutation import corrupt_program
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
-from kelp.tree.tree_diff import find_path
 
 logger = logging.getLogger(__name__)
 
@@ -271,14 +269,13 @@ def generate_training_example(
     rng: pyrandom.Random,
     step: int = 0,
 ) -> tuple[list[int], list[int]] | None:
-    """Generate a single training example from a clean program.
+    """Generate a single training example from a clean program (inline path).
 
-    Following the paper's forward_process_with_path:
-    1. With probability p_random, pick a random program as the 'corrupted' version
-    2. Otherwise, apply random AST mutations to corrupt the clean program
-    3. Compute TreeDiff path from corrupted back to clean
-    4. Pick a random step along the path
-    5. Encode as (token_ids, loss_mask)
+    Thin wrapper over the pure :func:`kelp.training.generation.generate_example`:
+    it resolves the curriculum-scheduled corruption difficulty for ``step`` and
+    the per-example knobs from ``config``, then returns just
+    ``(token_ids, loss_mask)`` for backward compatibility. The metadata the pure
+    core also produces is dropped here (the inline loop does not need it).
 
     Args:
         step: Current training step, used for curriculum scheduling of
@@ -286,74 +283,19 @@ def generate_training_example(
 
     Returns None if no valid training example could be generated.
     """
-    effective_max = config.effective_max_corruption_steps(step)
-
-    # Step 1: Generate a corrupted version.
-    if rng.random() < config.p_random and len(corpus) > 1:
-        # Use a random program from the corpus.
-        corrupted = rng.choice(corpus)
-        while corrupted == clean_source and len(corpus) > 1:
-            corrupted = rng.choice(corpus)
-    else:
-        # Apply random AST mutations.
-        num_steps = rng.randint(1, effective_max)
-        corrupted, _mutations = corrupt_program(
-            clean_source,
-            num_steps=num_steps,
-            bank=bank,
-            max_edit_stmts=config.max_edit_stmts,
-            rng=rng,
-        )
-
-    # Step 2: Compute TreeDiff path from corrupted to clean.
-    path = find_path(
-        corrupted,
+    example = generate_example(
         clean_source,
-        max_edit_stmts=config.max_edit_stmts,
+        corpus,
+        bank,
+        tokenizer,
+        max_corruption_steps=config.effective_max_corruption_steps(step),
+        gen_cfg=GenerationConfig.from_training_config(config),
+        rng=rng,
+        max_seq_len=max_seq_len,
     )
-
-    if not path:
+    if example is None:
         return None
-
-    # Step 3: Pick a random step along the path.
-    step_idx = rng.randrange(len(path))
-
-    # Apply all mutations before step_idx to get the intermediate program.
-    intermediate = corrupted
-    for i in range(step_idx):
-        intermediate = path[i].apply(intermediate)
-
-    # The training target is path[step_idx]: the next edit to apply.
-    target_mutation = path[step_idx]
-
-    # Step 4: Encode as training example.
-    # The edit position is the character offset in the intermediate program,
-    # which maps to a token index (1:1 for byte-level tokenizer).
-    edit_token_idx = tokenizer.char_offset_to_token_index(intermediate, target_mutation.start)
-
-    # Skip if the edit position overflows the tokenizer's position range.
-    if edit_token_idx >= tokenizer.num_position_tokens:
-        return None
-
-    # Optionally include a docstring prompt from the *clean* source.
-    prompt_source: str | None = None
-    if tokenizer.prompt_tokens:
-        docstring = extract_docstring(clean_source)
-        if docstring and rng.random() < config.p_prompt:
-            prompt_source = docstring
-
-    token_ids, loss_mask = tokenizer.encode_training_example(
-        context_source=intermediate,
-        edit_position_token_idx=edit_token_idx,
-        replacement_source=target_mutation.replacement,
-        prompt_source=prompt_source,
-    )
-
-    # Truncate or skip if too long.
-    if len(token_ids) > max_seq_len:
-        return None
-
-    return token_ids, loss_mask
+    return example.token_ids, example.loss_mask
 
 
 def create_edit_data_iter(
