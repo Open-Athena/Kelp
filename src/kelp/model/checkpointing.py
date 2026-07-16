@@ -17,11 +17,10 @@ Saving is a multi-host collective: every process calls :func:`save_checkpoint`
 (Orbax coordinates which host writes which shard); only process 0 writes the
 JSON sidecar.
 
-Note: saving is synchronous here (durable on return). Async checkpointing --
-overlapping the GCS write with subsequent training steps via a persistent
-``CheckpointManager`` -- is the tracked performance follow-up (see chainlink
-#116); it needs the checkpointer to live across steps, so it is a training-loop
-change rather than a change to these functions.
+Note: saving is synchronous here (durable on return). Making it asynchronous --
+overlapping the GCS write with subsequent training steps -- needs a checkpointer
+that persists across training steps rather than these per-call functions, and is
+tracked in issue #7.
 """
 
 import json

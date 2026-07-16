@@ -4,16 +4,20 @@
 """Streaming, seed-driven training-data generation.
 
 A drop-in replacement for ``create_edit_data_iter`` that *generates* examples on
-the fly from the corpus + SubtreeBank instead of materializing them. Because the
+the fly from the corpus + SubtreeBank instead of materializing them. The
 generative space (programs x corruption seeds x subtree-bank samples x path
-steps) vastly exceeds any stored set, this gives effectively unbounded diversity
-and stores nothing but the corpus; a run reproduces from
-``(corpus, seed, code)`` alone.
+steps) vastly exceeds any stored set, so this gives effectively unbounded
+diversity while storing nothing but the corpus; a run reproduces from the
+corpus, the seed, and the code alone.
 
-The benchmark on chainlink #118 showed that for the 8B/v5p target a handful of
-CPU cores keep the TPU fed at reuse factor 1 (each example seen once); smaller,
-faster-step models need either more cores or a reuse factor R>1 (each example
-fed R times) to amortize generation cost. Both are knobs here.
+Throughput: generation is CPU-bound (AST corruption + TreeDiff pathfinding),
+while the accelerator consumes batches quickly. A pool of CPU workers generates
+ahead of the trainer. When one training host has enough spare CPU cores to keep
+the accelerator fed, ``reuse_factor=1`` (each example seen once) suffices; when
+the accelerator outpaces generation (small, fast-step models), either add cores
+or raise ``reuse_factor`` so each example is fed R times, amortizing generation
+cost. Both are knobs on :func:`create_streaming_data_iter`. Running generation
+on hosts beyond the trainer is tracked in issue #8.
 
 Structure:
 - A generation **source** yields ``TrainingExample`` objects. ``_inline_source``
@@ -24,22 +28,21 @@ Structure:
 - :func:`create_streaming_data_iter` ties them together and yields the same
   ``{"token_ids", "loss_mask"}`` batch contract as ``create_edit_data_iter``.
 
-Curriculum: generation runs at the ceiling ``max_corruption_steps`` and each
-example is tagged (via #119 metadata) with the corruption depth used. At step
-``s`` the buffer only yields examples whose depth is within
-``effective_max_corruption_steps(s)`` (random-branch examples are always
-eligible). For the default ``constant`` curriculum this gate is a no-op. This is
-an approximation of the exact online two-branch sampling -- it reproduces the
-difficulty ramp but not the precise per-branch ratio; that refinement is noted
-on #122/#123 if research fidelity ever requires it.
+Curriculum: generation runs at the ceiling ``max_corruption_steps`` and tags
+each example with the corruption depth used. At step ``s`` the buffer only
+yields examples whose depth is within
+``EditTrainingConfig.effective_max_corruption_steps(s)`` (random-branch examples
+are always eligible). For the default ``constant`` curriculum this gate is a
+no-op. Generating at the ceiling and gating reproduces the difficulty ramp but
+only approximates the online random-vs-diffusion sampling ratio, and discards
+some generation during a strict warmup; issue #8 tracks generating directly at
+the current difficulty instead.
 
 Multi-host: each process derives a disjoint seed stream from
-``jax.process_index()`` so data-parallel hosts see different data. Batch size is
-per-process (matching the single-host data-parallel path in #114); wiring
-local->global batch assembly for multi-host is the coordination point with #114.
-
-The Iris actor-pool backend (generation on hosts beyond the trainer, for the
-small-model case) is a follow-up; this module implements the co-located pool.
+``jax.process_index()`` so data-parallel hosts see different data. The batch
+yielded here is per-process; assembling per-process batches into a global batch
+for multi-host training is tracked in issue #5. This module's worker pool is
+co-located with the trainer.
 """
 
 import logging

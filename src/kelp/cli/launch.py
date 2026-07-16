@@ -11,8 +11,8 @@ places it on a TPU slice. Kelp code never touches Iris types directly --
 ``fray.iris_backend`` performs the fray -> Iris translation.
 
 Inside the job the entrypoint runs ``python -m kelp.cli.train --preset <preset>
-<passthrough args>``; that process calls ``bootstrap_distributed()`` (#115) and
-shards across the slice's chips (#114).
+<passthrough args>``; that process initializes JAX distributed from the Iris job
+(a no-op on a single host) and shards the batch across the slice's chips.
 
 Usage (dry-run is the default; nothing is submitted until ``--submit``)::
 

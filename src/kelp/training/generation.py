@@ -61,7 +61,12 @@ class GenerationConfig:
 
 @dataclass(frozen=True)
 class TrainingExample:
-    """A single encoded example plus the metadata a data pipeline may key on."""
+    """A single encoded example plus the metadata a data pipeline may key on.
+
+    (A columnar/Arrow representation of a *batch* of these -- two ``list<int>``
+    columns plus the three metadata columns -- is being evaluated in issue #9 as
+    a potentially faster alternative to per-example Python objects.)
+    """
 
     token_ids: list[int]
     loss_mask: list[int]
@@ -86,7 +91,7 @@ def generate_example(
 ) -> TrainingExample | None:
     """Generate one training example from a clean program.
 
-    Following the paper's forward_process_with_path:
+    Following the tree-diffusion forward process with edit path [0]:
     1. With probability ``p_random``, pick a random corpus program as the
        'corrupted' version; otherwise apply 1..``max_corruption_steps`` AST
        mutations to corrupt the clean program.
@@ -96,6 +101,9 @@ def generate_example(
 
     Returns None if no valid training example could be generated (empty path,
     edit position overflow, or the encoding exceeds ``max_seq_len``).
+
+    References:
+        [0] Tree Diffusion (Kapur et al., 2024). https://arxiv.org/abs/2405.20519
     """
     # Step 1: Generate a corrupted version.
     is_random = False

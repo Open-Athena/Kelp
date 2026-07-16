@@ -377,13 +377,14 @@ def train_edit_model(
     """
     # Multi-host is not yet supported: the data iterators yield a per-process
     # batch, but the mesh spans all hosts, so a plain device_put mis-assembles
-    # the global array (local->global assembly is unimplemented; see #124).
-    # Fail loudly rather than train silently-wrong across hosts. Single-host
-    # multi-chip slices (v6e-4, v5p-8) run process_count()==1 and are fine.
+    # the global array (assembling per-process batches into a global batch is
+    # unimplemented; tracked in issue #5). Fail loudly rather than train
+    # silently-wrong across hosts. Single-host multi-chip slices (v6e-4, v5p-8)
+    # run process_count()==1 and are fine.
     if jax.process_count() > 1:
         raise NotImplementedError(
             f"Multi-host training ({jax.process_count()} processes) is not yet supported: "
-            "per-process batches are not assembled into a global batch (see #124). "
+            "per-process batches are not assembled into a global batch (see issue #5). "
             "Use a single-host slice for now."
         )
 

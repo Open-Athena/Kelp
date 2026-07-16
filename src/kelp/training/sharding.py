@@ -12,8 +12,9 @@ all-reduce inserted automatically by GSPMD.
 Backward compatible: on a single device the mesh has size 1, so ``replicate``
 and ``shard_batch`` are effectively no-ops and numerics are unchanged.
 
-Only data parallelism is implemented (params replicated). Sharding params for
-FSDP is a future extension once a single model replica outgrows one chip.
+Only data parallelism is implemented (parameters are replicated on every chip).
+Sharding parameters across chips (FSDP) for models that outgrow one chip's
+memory is tracked in issue #6.
 """
 
 import jax
