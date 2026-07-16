@@ -43,8 +43,13 @@ STEPS = 30
 
 tok = EditTokenizer(max_seq_len=MAX_SEQ_LEN)
 model = EditModelConfig(
-    vocab_size=tok.vocab_size, hidden_dim=256, intermediate_dim=1024,
-    num_layers=4, num_heads=4, num_kv_heads=4, max_seq_len=MAX_SEQ_LEN,
+    vocab_size=tok.vocab_size,
+    hidden_dim=256,
+    intermediate_dim=1024,
+    num_layers=4,
+    num_heads=4,
+    num_kv_heads=4,
+    max_seq_len=MAX_SEQ_LEN,
 )
 cfg = EditTrainingConfig(model=model, max_seq_len=MAX_SEQ_LEN, batch_size=BATCH, wandb_project=None)
 

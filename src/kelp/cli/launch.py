@@ -36,6 +36,7 @@ Prerequisites on the cluster:
 import argparse
 import logging
 import os
+from pathlib import Path
 
 from fray.types import Entrypoint, JobRequest, ResourceConfig, create_environment
 
@@ -44,6 +45,7 @@ from kelp.training.presets import PRESETS, get_preset
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENV_PASSTHROUGH = ("WANDB_API_KEY", "WANDB_ENTITY", "HF_TOKEN")
+DEFAULT_CONTROLLER = "https://iris.oa.dev"  # marin cluster controller
 
 
 def _device_summary(resources: ResourceConfig) -> str:
@@ -148,6 +150,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--replicas", type=int, default=None, help="Number of job replicas (default: preset).")
     parser.add_argument(
+        "--controller",
+        type=str,
+        default=DEFAULT_CONTROLLER,
+        help=f"Iris controller address for --submit (default: {DEFAULT_CONTROLLER}, marin).",
+    )
+    parser.add_argument(
         "--submit",
         action="store_true",
         help="Actually submit. Without this flag, prints the launch plan and exits (dry run).",
@@ -177,10 +185,14 @@ def main(argv: list[str] | None = None) -> None:
         print(format_dry_run(request, args.preset))
         return
 
-    from fray.current_client import current_client
+    # Submit to the cluster explicitly. fray's current_client() returns a
+    # LocalClient off-cluster (which would run the job on this machine), so we
+    # construct the Iris-backed client bound to the controller directly. The
+    # workspace is bundled and synced on the worker (with the tpu extra).
+    from fray.iris_backend import FrayIrisClient
 
-    client = current_client()
-    logger.info("Submitting job %r to %s", name, type(client).__name__)
+    logger.info("Submitting job %r to Iris controller %s", name, args.controller)
+    client = FrayIrisClient(args.controller, workspace=Path.cwd())
     handle = client.submit(request)
     logger.info("Submitted: job_id=%s", handle.job_id)
     print(handle.job_id)
