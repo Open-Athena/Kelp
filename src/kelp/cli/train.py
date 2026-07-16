@@ -36,9 +36,9 @@ import argparse
 import logging
 import os
 import random
-import sys
 from dataclasses import replace
 
+from kelp.cli._logging import configure_logging
 from kelp.corpus import TOY_CORPUS, load_corpus
 from kelp.training.distributed import bootstrap_distributed
 from kelp.training.engine import (
@@ -51,11 +51,6 @@ from kelp.tree.augmentation import augment_bank
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -145,6 +140,7 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     """Main entry point."""
+    configure_logging()  # force a stdout handler that survives absl/JAX (Iris-observable)
     args = parse_args()
 
     # Bring up JAX distributed from Iris job metadata before any device use.

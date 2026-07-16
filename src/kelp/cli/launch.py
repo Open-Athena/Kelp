@@ -40,6 +40,7 @@ from pathlib import Path
 
 from fray.types import Entrypoint, JobRequest, ResourceConfig, create_environment
 
+from kelp.cli._logging import configure_logging
 from kelp.training.presets import PRESETS, get_preset
 
 logger = logging.getLogger(__name__)
@@ -168,7 +169,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    configure_logging()
     args = parse_args(argv)
 
     # argparse.REMAINDER keeps a leading '--'; drop it.
