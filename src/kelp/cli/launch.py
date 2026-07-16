@@ -92,12 +92,15 @@ def build_job_request(
     env_vars = {k: environ[k] for k in env_names if k in environ}
     environment = create_environment(docker_image=image, env_vars=env_vars, extras=extras)
 
+    # Fall back to the preset's replica count (fray uses request.replicas or 1
+    # at submit, so a None here would silently under-provision a multi-host
+    # preset whose resource requests replicas>1).
     return JobRequest(
         name=name,
         entrypoint=entrypoint,
         resources=resources,
         environment=environment,
-        replicas=replicas,
+        replicas=replicas if replicas is not None else resources.replicas,
     )
 
 
