@@ -108,12 +108,17 @@ Programs are evaluated by:
 
 | Preset | Dims | Layers | Heads | Params | Target Hardware |
 |--------|------|--------|-------|--------|-----------------|
-| `toy` | 64 | 2 | 2 | ~0.1M | Unit tests |
+| `toy` | 64 | 2 | 2 | ~0.2M | Unit tests |
 | `overnight_cpu` | 256 | 4 | 4 | ~4.6M | Laptop (overnight) |
-| `laptop` | 512 | 6 | 8 | ~125M | Laptop (multi-day) |
-| `single_gpu` | 768 | 12 | 12 | ~300M | 1x A100 |
-| `tpu_v4_8` | 2048 | 24 | 16 | ~1B | TPU v4-8 |
-| `tpu_v5p_8` | 4096 | 32 | 32 | ~8B | TPU v5p-8 |
+| `laptop` | 512 | 6 | 8 | ~27M | Laptop (multi-day) |
+| `single_gpu` | 768 | 12 | 12 | ~117M | 1x A100 |
+| `tpu_vet` | 768 | 12 | 12 | ~115M | TPU v6e-4 (cheap data-scaling) |
+| `tpu_v4_8` | 2048 | 24 | 16 | ~1.6B | TPU v4-8 |
+| `tpu_v5p_8` | 4096 | 32 | 32 | ~7B | TPU v5p-8 |
+
+Params are measured at the actual training vocabulary: the byte + AST-position
+`EditTokenizer` is only ~1–4K tokens (not a 128K subword vocab), so the
+embedding/output layers are small and the transformer blocks dominate the count.
 
 TPU presets train data-parallel across the slice's chips and can be launched on
 Marin/Iris with `kelp-launch` — see [docs/training-tpu.md](docs/training-tpu.md).
