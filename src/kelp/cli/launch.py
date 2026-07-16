@@ -45,7 +45,6 @@ from kelp.training.presets import PRESETS, get_preset
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENV_PASSTHROUGH = ("WANDB_API_KEY", "WANDB_ENTITY", "HF_TOKEN")
-DEFAULT_CONTROLLER = "https://iris.oa.dev"  # marin cluster controller
 
 
 def _device_summary(resources: ResourceConfig) -> str:
@@ -150,10 +149,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--replicas", type=int, default=None, help="Number of job replicas (default: preset).")
     parser.add_argument(
-        "--controller",
+        "--cluster",
         type=str,
-        default=DEFAULT_CONTROLLER,
-        help=f"Iris controller address for --submit (default: {DEFAULT_CONTROLLER}, marin).",
+        default="marin",
+        help="Iris cluster to submit to (resolves controller + credentials; default: marin).",
     )
     parser.add_argument(
         "--submit",
@@ -187,13 +186,19 @@ def main(argv: list[str] | None = None) -> None:
 
     # Submit to the cluster explicitly. fray's current_client() returns a
     # LocalClient off-cluster (which would run the job on this machine), so we
-    # construct the Iris-backed client bound to the controller directly. The
-    # workspace is bundled and synced on the worker (with the tpu extra).
+    # open an authenticated Iris client via the iris CLI's own helper --
+    # open_iris_client resolves the controller URL and IAP credentials for the
+    # named cluster (a bare IrisClient.remote to the URL returns Unauthorized) --
+    # then wrap it with fray so its ResourceConfig / environment conversion
+    # applies. The workspace is bundled and synced on the worker (with the tpu
+    # extra). Submission happens inside the context so the endpoint stays live.
     from fray.iris_backend import FrayIrisClient
+    from iris.cli.connect import open_iris_client
 
-    logger.info("Submitting job %r to Iris controller %s", name, args.controller)
-    client = FrayIrisClient(args.controller, workspace=Path.cwd())
-    handle = client.submit(request)
+    logger.info("Submitting job %r to Iris cluster %s", name, args.cluster)
+    with open_iris_client(cluster_name=args.cluster, workspace=Path.cwd()) as iris_client:
+        client = FrayIrisClient.from_iris_client(iris_client)
+        handle = client.submit(request)
     logger.info("Submitted: job_id=%s", handle.job_id)
     print(handle.job_id)
 
