@@ -39,6 +39,8 @@ Usage:
 
 import argparse
 import ast
+import io
+import json
 import logging
 import random
 import sys
@@ -61,10 +63,13 @@ EXCLUDE_DIRS = {".venv", "__pycache__", ".git", "node_modules", "checkpoints", "
 # EVAL_TASKS), so they can never drift out of sync with the eval set.
 
 
-def extract_functions_from_file(source: str, max_length: int) -> list[str]:
+def extract_functions_from_file(source: str, max_length: int, *, require_docstring: bool = False) -> list[str]:
     """Extract individual function definitions from a Python source file.
 
-    Returns dedented function source strings that are parseable and under max_length.
+    Returns dedented function source strings that are parseable and under
+    max_length. When ``require_docstring`` is set, only functions that carry a
+    docstring are kept -- used to build a prompt-conditioning corpus where the
+    docstring supplies the intent signal.
     """
     try:
         tree = ast.parse(source)
@@ -88,6 +93,8 @@ def extract_functions_from_file(source: str, max_length: int) -> list[str]:
         try:
             ast.parse(func_src)
         except SyntaxError:
+            continue
+        if require_docstring and extract_docstring(func_src) is None:
             continue
         functions.append(func_src)
     return functions
@@ -246,6 +253,78 @@ def stream_stack_edu(max_functions: int, max_length: int) -> list[str]:
         return []
 
 
+# Marin's Stack Edu Python mirror, colocated with the us-east5 training slice.
+DEFAULT_STACK_EDU_GCS = "gs://marin-us-east5/documents/stack_edu/Python-4da2c7/train"
+
+
+def stream_stack_edu_gcs(
+    gcs_path: str, max_functions: int, max_length: int, *, require_docstring: bool = False
+) -> list[str]:
+    """Stream educational Python functions from Marin's Stack Edu mirror in GCS.
+
+    Reads dolma-format JSONL shards (zstd-compressed) straight from a Marin GCS
+    bucket -- no HuggingFace token or rate limits, and zero-egress when the
+    bucket is colocated with the training slice (e.g. us-east5). Each record's
+    ``text`` field holds a raw Python source file; individual function
+    definitions are extracted from it, matching stream_stack_edu's contract.
+
+    ``gcs_path`` is a prefix (a directory of ``*.jsonl.zst`` shards); shards are
+    read in sorted order so a given max_functions is reproducible.
+    """
+    try:
+        import gcsfs
+        import zstandard
+    except ImportError:
+        logger.warning("  stack-edu-gcs: gcsfs/zstandard not installed, skipping")
+        return []
+
+    logger.info(f"  Streaming stack-edu from GCS {gcs_path} (target: {max_functions} functions)...")
+    try:
+        fs = gcsfs.GCSFileSystem()
+        shards = sorted(fs.glob(gcs_path.rstrip("/") + "/**/*.jsonl.zst"))
+    except Exception as e:
+        logger.warning(f"  stack-edu-gcs: failed to list shards under {gcs_path}: {e}")
+        return []
+    if not shards:
+        logger.warning(f"  stack-edu-gcs: no .jsonl.zst shards under {gcs_path}")
+        return []
+
+    functions: list[str] = []
+    files_scanned = 0
+    dctx = zstandard.ZstdDecompressor()
+    for shard in shards:
+        if len(functions) >= max_functions:
+            break
+        try:
+            with fs.open(shard, "rb") as raw, dctx.stream_reader(raw) as reader:
+                text_stream = io.TextIOWrapper(reader, encoding="utf-8")
+                for line in text_stream:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        code = json.loads(line).get("text", "")
+                    except json.JSONDecodeError:
+                        continue
+                    if not code:
+                        continue
+                    files_scanned += 1
+                    functions.extend(
+                        extract_functions_from_file(code, max_length, require_docstring=require_docstring)
+                    )
+                    if files_scanned % 5000 == 0:
+                        logger.info(f"    Scanned {files_scanned} files, {len(functions)} functions so far...")
+                    if len(functions) >= max_functions:
+                        break
+        except Exception as e:
+            logger.warning(f"  stack-edu-gcs: failed reading {shard}: {e}")
+            continue
+
+    functions = functions[:max_functions]
+    logger.info(f"  stack-edu-gcs: extracted {len(functions)} functions from {files_scanned} files")
+    return functions
+
+
 def deduplicate_and_filter(programs: list[str], max_length: int) -> list[str]:
     """Remove duplicates, blocklisted eval programs, and filter.
 
@@ -338,7 +417,28 @@ def parse_args() -> argparse.Namespace:
         "--stack-edu-max",
         type=int,
         default=0,
-        help="Max functions to stream from HuggingFaceTB/stack-edu Python (0=skip, e.g. 50000)",
+        help="Max functions to stream from Stack Edu Python (0=skip, e.g. 50000)",
+    )
+    parser.add_argument(
+        "--stack-edu-gcs",
+        type=str,
+        nargs="?",
+        const=DEFAULT_STACK_EDU_GCS,
+        default=None,
+        help="Stream Stack Edu from Marin's GCS mirror (jsonl.zst) instead of HuggingFace, using "
+        f"--stack-edu-max as the target count. Bare flag uses the default us-east5 path ({DEFAULT_STACK_EDU_GCS}); "
+        "no HF token needed and zero-egress when colocated with the training slice.",
+    )
+    parser.add_argument(
+        "--no-local",
+        action="store_true",
+        help="Skip extracting functions from local source directories (Stack Edu / HF only).",
+    )
+    parser.add_argument(
+        "--require-docstring",
+        action="store_true",
+        help="Keep only functions that carry a docstring. Builds a corpus for prompt conditioning, "
+        "where the docstring is the intent signal (function-level docstring coverage is otherwise low).",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed for shuffling")
     return parser.parse_args()
@@ -358,9 +458,20 @@ def main():
     all_programs: list[str] = []
 
     # Source 1: Local Python functions from source directories.
-    for source_dir in source_dirs:
-        local_funcs = extract_local_functions(source_dir, args.max_length)
-        all_programs.extend(local_funcs)
+    if args.no_local:
+        logger.info("  Local extraction: skipped (--no-local)")
+    else:
+        for source_dir in source_dirs:
+            local_funcs = extract_local_functions(source_dir, args.max_length)
+            all_programs.extend(local_funcs)
+
+    # Source: Stack Edu from Marin GCS (works offline from HuggingFace).
+    if args.stack_edu_max > 0 and args.stack_edu_gcs:
+        all_programs.extend(
+            stream_stack_edu_gcs(
+                args.stack_edu_gcs, args.stack_edu_max, args.max_length, require_docstring=args.require_docstring
+            )
+        )
 
     if not args.no_hf:
         # Source 2: MBPP (skip if held out for eval).
@@ -380,7 +491,8 @@ def main():
             all_programs.extend(github)
 
         # Source 5: HuggingFaceTB/stack-edu (educational Python code).
-        if args.stack_edu_max > 0:
+        # Skipped when the Marin GCS mirror is used (handled above) to avoid double-pulling.
+        if args.stack_edu_max > 0 and not args.stack_edu_gcs:
             stack_edu = stream_stack_edu(args.stack_edu_max, args.max_length)
             all_programs.extend(stack_edu)
 
