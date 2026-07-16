@@ -189,12 +189,21 @@ def _multiprocess_source(
 
 
 class ReuseShuffleBuffer:
-    """A bounded shuffle buffer that feeds each example up to ``reuse_factor`` times.
+    """A bounded shuffle reservoir that feeds each example up to ``reuse_factor`` times.
 
-    ``draw(eligible)`` returns a random buffered example satisfying the
-    ``eligible`` predicate, refilling from ``source`` as needed. Reuse factor 1
-    means every example is fresh; R>1 amortizes generation cost by feeding each
-    example R times before eviction.
+    ``take(eligible)`` removes and returns a random reservoir *entry*
+    (``[example, remaining_uses]``) satisfying the predicate; because it is
+    removed, the same example cannot be drawn again until the caller ``put``\\ s
+    it back -- so a batch drawn via repeated ``take`` has no duplicates. The
+    caller decrements the entry's remaining uses and ``put``\\ s it back only
+    while uses remain, giving each example ``reuse_factor`` feeds across batches.
+
+    Memory stays O(capacity). Under an active curriculum gate the source (which
+    generates at the ceiling difficulty) yields mostly-ineligible examples; when
+    the reservoir saturates with them a chunk is evicted -- those examples are
+    regenerated cheaply once the curriculum admits their difficulty -- rather
+    than accumulated. (A previous version grew the reservoir on starvation,
+    which was unbounded and OOM'd during curriculum warmup.)
     """
 
     def __init__(
@@ -221,34 +230,41 @@ class ReuseShuffleBuffer:
             except StopIteration:
                 break
 
-    def draw(self, eligible: Callable[[TrainingExample], bool]) -> TrainingExample:
-        """Return a random eligible example, or raise StopIteration if the source
-        is finite and no eligible example remains."""
+    def take(self, eligible: Callable[[TrainingExample], bool]) -> list:
+        """Remove and return a random eligible entry ``[example, remaining_uses]``.
+
+        Raises StopIteration only if the source is finite and no eligible entry
+        remains. The reservoir stays bounded: on saturation with ineligible
+        entries a chunk is evicted rather than the buffer grown.
+        """
         self._fill(self._capacity)
-        attempts = 0
+        scans = 0
         while True:
             if not self._items:
                 self._fill(self._capacity)
                 if not self._items:
                     raise StopIteration
             idx = self._rng.randrange(len(self._items))
-            entry = self._items[idx]
-            example: TrainingExample = entry[0]
-            if eligible(example):
-                entry[1] -= 1
-                if entry[1] <= 0:  # spent: evict via swap-pop
-                    self._items[idx] = self._items[-1]
-                    self._items.pop()
-                return example
-            attempts += 1
-            if attempts > 4 * max(self._capacity, 1):
-                # Starved of eligible examples (e.g. a strict early curriculum
-                # gate): pull a fresh wave. If the pool cannot grow, give up.
-                before = len(self._items)
-                self._fill(before + self._capacity)
-                if len(self._items) == before:
+            if eligible(self._items[idx][0]):
+                entry = self._items[idx]
+                self._items[idx] = self._items[-1]  # remove via swap-pop
+                self._items.pop()
+                return entry
+            scans += 1
+            if scans > 4 * max(self._capacity, 1):
+                # Reservoir saturated with currently-ineligible examples: evict a
+                # chunk (they regenerate once the curriculum admits them) and
+                # pull fresh candidates -- bounded, unlike growing the buffer.
+                evict = min(len(self._items), max(self._capacity // 2, 1))
+                del self._items[:evict]
+                self._fill(self._capacity)
+                if not self._items:
                     raise StopIteration
-                attempts = 0
+                scans = 0
+
+    def put(self, entry: list) -> None:
+        """Return an entry (with remaining uses) to the reservoir."""
+        self._items.append(entry)
 
 
 def _all_eligible(ex: TrainingExample) -> bool:
@@ -328,7 +344,15 @@ def create_streaming_data_iter(
             # Fast path: constant curriculum (effective==ceiling) admits everything.
             eligible = _all_eligible if effective_max >= ceiling else _within_difficulty(effective_max)
 
-            batch = [buffer.draw(eligible) for _ in range(config.batch_size)]
+            # Take distinct entries for the batch (no within-batch duplicates),
+            # then return the ones with remaining uses so reuse_factor spreads a
+            # given example across *different* batches rather than within one.
+            entries = [buffer.take(eligible) for _ in range(config.batch_size)]
+            batch = [entry[0] for entry in entries]
+            for entry in entries:
+                entry[1] -= 1
+                if entry[1] > 0:
+                    buffer.put(entry)
             yield _stack_and_pad(batch, config.batch_size, max_seq_len)
             step += 1
     finally:
