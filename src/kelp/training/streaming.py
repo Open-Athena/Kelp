@@ -308,6 +308,7 @@ def create_streaming_data_iter(
     buffer_size: int = 1024,
     process_index: int | None = None,
     process_count: int | None = None,
+    start_step: int = 0,
 ) -> Iterator[dict[str, Array]]:
     """Stream training batches by generating examples on the fly.
 
@@ -322,6 +323,9 @@ def create_streaming_data_iter(
         buffer_size: Shuffle-buffer capacity (examples).
         process_index / process_count: Data-parallel host coordinates; default to
             ``jax.process_index()`` / ``jax.process_count()``.
+        start_step: Training step to start the curriculum clock at, so a resumed
+            run gets the right corruption difficulty (the generated stream itself
+            is not replayed).
     """
     if process_index is None:
         process_index = jax.process_index()
@@ -340,7 +344,7 @@ def create_streaming_data_iter(
         logger.info("Streaming dataloader: %d gen workers, reuse=%d, buffer=%d", num_workers, reuse_factor, buffer_size)
 
     buffer = ReuseShuffleBuffer(source, capacity=buffer_size, reuse_factor=reuse_factor, rng=pyrandom.Random(seed))
-    step = 0
+    step = start_step
     try:
         while True:
             effective_max = config.effective_max_corruption_steps(step)

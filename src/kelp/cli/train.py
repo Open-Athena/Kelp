@@ -40,10 +40,12 @@ from dataclasses import replace
 
 from kelp.cli._logging import configure_logging
 from kelp.corpus import TOY_CORPUS, load_corpus
+from kelp.model.checkpointing import find_best_checkpoint
 from kelp.training.distributed import bootstrap_distributed
 from kelp.training.engine import (
     EditTrainingConfig,
     create_edit_data_iter,
+    load_resume_state,
     train_edit_model,
 )
 from kelp.training.presets import PRESETS, get_preset
@@ -135,6 +137,14 @@ def parse_args() -> argparse.Namespace:
         default=1024,
         help="Streaming: shuffle-buffer capacity in examples (default: 1024)",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=True,
+        help="Resume from the latest checkpoint in --output-dir if one exists (default: on). "
+        "This makes preemptible runs recover automatically.",
+    )
+    parser.add_argument("--no-resume", dest="resume", action="store_false", help="Always start from step 0.")
     return parser.parse_args()
 
 
@@ -192,6 +202,17 @@ def main():
         p_prompt=args.p_prompt,
     )
 
+    # Resume from the latest checkpoint in output_dir if one exists (e.g. after a
+    # preemption) -- full state (params + optimizer + step + rng) is restored.
+    initial_state = None
+    start_step = 0
+    if args.resume and args.output_dir:
+        latest = find_best_checkpoint(args.output_dir)
+        if latest is not None:
+            logger.info(f"Resuming from checkpoint: {latest}")
+            initial_state = load_resume_state(latest, train_cfg)
+            start_step = int(initial_state.step)
+
     if args.data_loader == "streaming":
         from kelp.training.streaming import create_streaming_data_iter
 
@@ -206,6 +227,7 @@ def main():
             num_workers=workers,
             reuse_factor=args.reuse_factor,
             buffer_size=args.buffer_size,
+            start_step=start_step,
         )
     else:
         data_iter = create_edit_data_iter(
@@ -214,6 +236,7 @@ def main():
             tokenizer=tokenizer,
             config=train_cfg,
             seed=args.seed,
+            start_step=start_step,
         )
 
     logger.info(f"Training config: {train_cfg}")
@@ -222,6 +245,7 @@ def main():
     train_edit_model(
         config=train_cfg,
         data_iter=data_iter,
+        initial_state=initial_state,
     )
 
     logger.info("Training complete!")

@@ -26,6 +26,7 @@ Generates training data by:
 
 import logging
 import math
+import os
 import random as pyrandom
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -37,7 +38,10 @@ from etils import epath
 from jax.tree_util import register_dataclass
 from jaxtyping import Array
 
-from kelp.model.checkpointing import save_checkpoint
+from kelp.model.checkpointing import (
+    load_training_checkpoint,
+    save_training_checkpoint,
+)
 from kelp.model.config import EditModelConfig
 from kelp.model.edit_model import (
     EditModelParams,
@@ -304,15 +308,17 @@ def create_edit_data_iter(
     tokenizer: EditTokenizer,
     config: EditTrainingConfig,
     seed: int = 42,
+    start_step: int = 0,
 ) -> Iterator[dict[str, Array]]:
     """Create a training data iterator for tree diffusion.
 
     Yields batches of (token_ids, loss_mask) arrays. Each batch is tagged
     with the current step so generate_training_example can use
-    curriculum-based corruption difficulty.
+    curriculum-based corruption difficulty. ``start_step`` aligns that
+    curriculum when resuming a run (the data sequence itself is not replayed).
     """
     rng = pyrandom.Random(seed)
-    step = 0
+    step = start_step
 
     while True:
         batch_token_ids: list[list[int]] = []
@@ -357,6 +363,7 @@ def train_edit_model(
     config: EditTrainingConfig,
     data_iter: Iterator[dict[str, Array]],
     initial_params: EditModelParams | None = None,
+    initial_state: "EditTrainingState | None" = None,
     log_callback: LogCallback | None = None,
     mesh: "jax.sharding.Mesh | None" = None,
 ) -> EditModelParams:
@@ -366,6 +373,10 @@ def train_edit_model(
         config: Training configuration.
         data_iter: Iterator yielding batches with 'token_ids' and 'loss_mask'.
         initial_params: Optional initial parameters (for transfer learning).
+        initial_state: Optional full training state to resume from (params +
+            optimizer + step + rng), e.g. from :func:`load_resume_state`.
+            Training continues from ``initial_state.step``. Mutually exclusive
+            with ``initial_params``.
         log_callback: Optional callback for logging metrics.
         mesh: Optional device mesh for data-parallel training. Defaults to a
             1-D mesh over all local devices. On a single device this is a
@@ -419,23 +430,29 @@ def train_edit_model(
         except ImportError:
             logger.warning("wandb not installed; skipping W&B logging")
 
-    if initial_params is None:
-        key, init_key = jax.random.split(key)
-        params = init_edit_params(config.model, key=init_key)
+    if initial_state is not None:
+        state = initial_state
+        start_step = int(state.step)
+        logger.info(f"Resuming training from step {start_step}")
     else:
-        params = initial_params
+        if initial_params is None:
+            key, init_key = jax.random.split(key)
+            params = init_edit_params(config.model, key=init_key)
+        else:
+            params = initial_params
+        opt_state = optimizer.init(params)
+        state = EditTrainingState(step=0, params=params, opt_state=opt_state, key=key)
+        start_step = 0
 
-    opt_state = optimizer.init(params)
-    state = EditTrainingState(step=0, params=params, opt_state=opt_state, key=key)
     # Replicate the training state across all devices; the JITted step then
     # runs data-parallel over batch-sharded inputs.
     state = replicate(state, mesh)
 
     train_step = make_edit_train_step(config.model, optimizer)
 
-    logger.info(f"Starting edit model training for {config.total_steps} steps")
+    logger.info(f"Starting edit model training: steps {start_step}..{config.total_steps}")
 
-    for step in range(config.total_steps):
+    for step in range(start_step, config.total_steps):
         batch = shard_batch(next(data_iter), mesh)
         state, metrics = train_step(state, batch)
 
@@ -451,18 +468,30 @@ def train_edit_model(
 
         if config.output_dir and config.checkpoint_interval > 0 and (step + 1) % config.checkpoint_interval == 0:
             ckpt_dir = epath.Path(config.output_dir) / f"step-{step + 1:06d}"
-            save_checkpoint(state.params, config.model, ckpt_dir)
+            save_training_checkpoint(state.params, state.opt_state, state.step, state.key, config.model, ckpt_dir)
 
-    # Save final checkpoint.
+    # Save final checkpoint (resumable, like the interval checkpoints).
     if config.output_dir:
         ckpt_dir = epath.Path(config.output_dir) / f"step-{config.total_steps:06d}"
-        save_checkpoint(state.params, config.model, ckpt_dir)
+        save_training_checkpoint(state.params, state.opt_state, state.step, state.key, config.model, ckpt_dir)
 
     if wandb_run is not None:
         wandb_run.finish()
 
     logger.info("Training complete")
     return state.params
+
+
+def load_resume_state(ckpt_dir: str | os.PathLike, config: EditTrainingConfig) -> "EditTrainingState":
+    """Assemble an :class:`EditTrainingState` from a resumable checkpoint.
+
+    Rebuilds the optimizer from ``config`` (needed to restore the optimizer
+    state's structure) and returns the full state to hand to
+    :func:`train_edit_model` as ``initial_state``.
+    """
+    optimizer = create_edit_optimizer(config)
+    params, opt_state, step, key, _model_config = load_training_checkpoint(ckpt_dir, optimizer)
+    return EditTrainingState(step=step, params=params, opt_state=opt_state, key=key)
 
 
 def _log_edit_metrics(step: int, metrics: dict) -> None:

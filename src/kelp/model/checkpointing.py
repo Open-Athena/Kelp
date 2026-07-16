@@ -28,7 +28,9 @@ import logging
 import os
 
 import jax
+import jax.numpy as jnp
 import numpy as np
+import optax
 import orbax.checkpoint as ocp
 from etils import epath
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
@@ -41,6 +43,9 @@ logger = logging.getLogger(__name__)
 
 CONFIG_FILENAME = "config.json"
 PARAMS_SUBDIR = "params"
+# Resumable extras (optimizer state, step, RNG key) live alongside params/ so
+# load_checkpoint stays params-only for eval while resume reads both.
+TRAIN_STATE_SUBDIR = "train_state"
 
 
 def _absolute(ckpt_dir: str | os.PathLike) -> epath.Path:
@@ -50,6 +55,20 @@ def _absolute(ckpt_dir: str | os.PathLike) -> epath.Path:
     if "://" not in raw:
         raw = os.path.abspath(raw)
     return epath.Path(raw)
+
+
+def _replicated_current_sharding() -> NamedSharding:
+    """A replicated sharding over the *current* devices, so a restore reshards
+    the saved arrays onto whatever topology we load on (e.g. a checkpoint saved
+    across TPU chips loads on a single CPU for eval, or back onto a TPU mesh)."""
+    devices = jax.devices()
+    mesh = Mesh(np.asarray(devices).reshape(len(devices)), ("dp",))
+    return NamedSharding(mesh, PartitionSpec())
+
+
+def _with_sharding(abstract_tree, sharding: NamedSharding):
+    """Attach ``sharding`` to every ShapeDtypeStruct leaf of an abstract pytree."""
+    return jax.tree.map(lambda s: jax.ShapeDtypeStruct(s.shape, s.dtype, sharding=sharding), abstract_tree)
 
 
 def _config_to_json(model_config: EditModelConfig) -> dict:
@@ -120,24 +139,67 @@ def load_checkpoint(ckpt_dir: str | os.PathLike) -> tuple[EditModelParams, EditM
     # per-leaf shapes/dtypes (and pytree structure) without allocating, so
     # Orbax rebuilds the registered dataclass tree rather than plain dicts.
     abstract_params = jax.eval_shape(lambda: init_edit_params(config, key=jax.random.PRNGKey(0)))
-
-    # Attach a sharding for the *current* device topology so Orbax reshards the
-    # saved arrays onto wherever we load. Without this the restore reuses the
-    # topology the checkpoint was saved with (e.g. replicated across 4 TPU
-    # chips) and fails on a different one (e.g. a single CPU for eval). Params
-    # are replicated; this loads them replicated on whatever devices exist.
-    devices = jax.devices()
-    mesh = Mesh(np.asarray(devices).reshape(len(devices)), ("dp",))
-    replicated = NamedSharding(mesh, PartitionSpec())
-    abstract_params = jax.tree.map(
-        lambda s: jax.ShapeDtypeStruct(s.shape, s.dtype, sharding=replicated), abstract_params
-    )
+    abstract_params = _with_sharding(abstract_params, _replicated_current_sharding())
 
     ckptr = ocp.StandardCheckpointer()
     params = ckptr.restore(params_path, target=abstract_params)
 
     logger.info(f"Loaded checkpoint from {ckpt_dir} (vocab_size={config.vocab_size})")
     return params, config
+
+
+def save_training_checkpoint(
+    params: EditModelParams,
+    opt_state: optax.OptState,
+    step: int,
+    key: jax.Array,
+    model_config: EditModelConfig,
+    ckpt_dir: str | os.PathLike,
+) -> None:
+    """Save a *resumable* checkpoint: model params (also readable by
+    :func:`load_checkpoint` for eval) plus the optimizer state, step, and RNG
+    key needed to resume training exactly (e.g. after a preemption).
+
+    The params live in ``params/`` (as :func:`save_checkpoint` writes them) and
+    the resume extras in ``train_state/``.
+    """
+    path = _absolute(ckpt_dir)
+    save_checkpoint(params, model_config, path)  # config.json + params/
+
+    extras = {"opt_state": opt_state, "step": jnp.asarray(step, dtype=jnp.int32), "key": key}
+    ckptr = ocp.StandardCheckpointer()
+    ckptr.save(path / TRAIN_STATE_SUBDIR, extras, force=True)
+    ckptr.wait_until_finished()
+
+
+def load_training_checkpoint(
+    ckpt_dir: str | os.PathLike,
+    optimizer: optax.GradientTransformation,
+) -> tuple[EditModelParams, optax.OptState, int, jax.Array, EditModelConfig]:
+    """Load a resumable checkpoint into its components.
+
+    Returns ``(params, opt_state, step, key, config)``. The ``optimizer`` is
+    needed only to reconstruct the abstract optimizer-state structure for the
+    restore (its arrays come from disk). Arrays are resharded onto the current
+    topology, so a checkpoint saved across TPU chips resumes on a different
+    device count.
+    """
+    params, config = load_checkpoint(ckpt_dir)
+    state_path = _absolute(ckpt_dir) / TRAIN_STATE_SUBDIR
+    if not state_path.exists():
+        raise FileNotFoundError(f"No resumable train_state/ at {state_path} (was this saved with save_checkpoint?)")
+
+    sharding = _replicated_current_sharding()
+    abstract = {
+        "opt_state": _with_sharding(jax.eval_shape(lambda: optimizer.init(params)), sharding),
+        "step": jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding),
+        "key": _with_sharding(jax.eval_shape(lambda: jax.random.PRNGKey(0)), sharding),
+    }
+    ckptr = ocp.StandardCheckpointer()
+    extras = ckptr.restore(state_path, target=abstract)
+
+    logger.info(f"Loaded resumable checkpoint from {ckpt_dir} at step {int(extras['step'])}")
+    return params, extras["opt_state"], int(extras["step"]), extras["key"], config
 
 
 def find_best_checkpoint(checkpoint_dir: str | os.PathLike) -> epath.Path | None:
