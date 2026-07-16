@@ -28,11 +28,29 @@ and load_corpus() below for the reader.
 """
 
 
+def _finalize_program(lines: list[str]) -> str | None:
+    """Strip leading/trailing blank lines and join into a program.
+
+    Returns the program text (newline-terminated) or None if the block is
+    empty once blank lines are removed. Applied uniformly to every program so
+    whitespace is symmetric across the corpus, not just for the final block.
+    """
+    start, end = 0, len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    if start == end:
+        return None
+    return "\n".join(lines[start:end]) + "\n"
+
+
 def load_corpus(path: str) -> list[str]:
     """Load a corpus from a file.
 
     Programs are separated by lines containing only '# ---'.
-    This allows programs to contain internal blank lines.
+    This allows programs to contain internal blank lines. Leading/trailing
+    blank lines are stripped from every program identically.
     """
     programs: list[str] = []
     current_lines: list[str] = []
@@ -40,20 +58,16 @@ def load_corpus(path: str) -> list[str]:
     with open(path) as f:
         for line in f:
             if line.rstrip() == CORPUS_SEPARATOR:
-                if current_lines:
-                    programs.append("\n".join(current_lines) + "\n")
-                    current_lines = []
+                program = _finalize_program(current_lines)
+                if program is not None:
+                    programs.append(program)
+                current_lines = []
             else:
                 current_lines.append(line.rstrip())
 
-    if current_lines:
-        # Strip leading/trailing empty lines from last program.
-        while current_lines and not current_lines[0].strip():
-            current_lines.pop(0)
-        while current_lines and not current_lines[-1].strip():
-            current_lines.pop()
-        if current_lines:
-            programs.append("\n".join(current_lines) + "\n")
+    program = _finalize_program(current_lines)
+    if program is not None:
+        programs.append(program)
 
     return programs
 

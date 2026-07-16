@@ -158,7 +158,7 @@ class _NameRewriter(ast.NodeTransformer):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         if node.name in self.mapping:
-            node = ast.FunctionDef(
+            renamed = ast.FunctionDef(
                 name=self.mapping[node.name],
                 args=node.args,
                 body=node.body,
@@ -166,7 +166,8 @@ class _NameRewriter(ast.NodeTransformer):
                 returns=node.returns,
                 type_comment=node.type_comment,
             )
-            ast.copy_location(node, node)
+            ast.copy_location(renamed, node)  # carry source location from the original node
+            node = renamed
         self.generic_visit(node)
         return node
 

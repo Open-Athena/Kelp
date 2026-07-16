@@ -162,6 +162,34 @@ def tpu_smoke_preset() -> ModelPreset:
     )
 
 
+def tpu_vet_preset() -> ModelPreset:
+    """~300M model on the cheapest validated TPU slice (v6e-4) for data-scaling vet runs.
+
+    The research-credible middle between ``tpu_smoke`` (a ~5M toy for path
+    validation) and ``tpu_v4_8`` (~1B). Big enough to absorb diverse data
+    without the capacity-starvation that collapsed the v5 corpus-scaling run,
+    small enough to train cheaply (~10-12 chip-hours for a 30K-step run). Pair
+    with ``--data-loader streaming`` + prompt conditioning to push the scaling
+    into data variance rather than parameters. batch_size divides the 4 chips.
+    """
+    return ModelPreset(
+        name="tpu_vet",
+        config=EditModelConfig(
+            vocab_size=DEFAULT_VOCAB_SIZE,
+            hidden_dim=768,
+            intermediate_dim=3072,
+            num_layers=12,
+            num_heads=12,
+            num_kv_heads=12,
+            max_seq_len=1024,
+        ),
+        resource=ResourceConfig.with_tpu("v6e-4"),
+        batch_size=256,
+        learning_rate=3e-4,
+        description="~300M model on v6e-4 for cheap data-scaling experiments",
+    )
+
+
 def tpu_v4_8_preset() -> ModelPreset:
     """Large preset for v4-8 TPU (~1B params)."""
     return ModelPreset(
@@ -208,6 +236,7 @@ PRESETS = {
     "laptop": laptop_preset,
     "single_gpu": single_gpu_preset,
     "tpu_smoke": tpu_smoke_preset,
+    "tpu_vet": tpu_vet_preset,
     "tpu_v4_8": tpu_v4_8_preset,
     "tpu_v5p_8": tpu_v5p_8_preset,
 }

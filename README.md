@@ -112,6 +112,7 @@ Programs are evaluated by:
 | `overnight_cpu` | 256 | 4 | 4 | ~4.6M | Laptop (overnight) |
 | `laptop` | 512 | 6 | 8 | ~125M | Laptop (multi-day) |
 | `single_gpu` | 768 | 12 | 12 | ~300M | 1x A100 |
+| `tpu_vet` | 768 | 12 | 12 | ~300M | TPU v6e-4 (cheap data-scaling) |
 | `tpu_v4_8` | 2048 | 24 | 16 | ~1B | TPU v4-8 |
 | `tpu_v5p_8` | 4096 | 32 | 32 | ~8B | TPU v5p-8 |
 
