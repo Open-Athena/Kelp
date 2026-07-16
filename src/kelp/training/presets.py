@@ -55,7 +55,7 @@ DEFAULT_VOCAB_SIZE = 128256
 
 
 def toy_preset() -> ModelPreset:
-    """Tiny preset for unit testing (~1M params)."""
+    """Tiny preset for unit testing (~0.2M params)."""
     return ModelPreset(
         name="toy",
         config=EditModelConfig(
@@ -75,7 +75,7 @@ def toy_preset() -> ModelPreset:
 
 
 def overnight_cpu_preset() -> ModelPreset:
-    """Preset optimized for overnight CPU training (~10M params).
+    """Preset optimized for overnight CPU training (~4.6M params).
 
     Designed to complete ~30k+ steps in 8 hours on a laptop CPU.
     """
@@ -98,7 +98,7 @@ def overnight_cpu_preset() -> ModelPreset:
 
 
 def laptop_preset() -> ModelPreset:
-    """Small preset for laptop development (~125M params)."""
+    """Small preset for laptop development (~27M params)."""
     return ModelPreset(
         name="laptop",
         config=EditModelConfig(
@@ -118,7 +118,7 @@ def laptop_preset() -> ModelPreset:
 
 
 def single_gpu_preset() -> ModelPreset:
-    """Medium preset for single GPU (~300M params)."""
+    """Medium preset for single GPU (~117M params)."""
     return ModelPreset(
         name="single_gpu",
         config=EditModelConfig(
@@ -163,14 +163,17 @@ def tpu_smoke_preset() -> ModelPreset:
 
 
 def tpu_vet_preset() -> ModelPreset:
-    """~300M model on the cheapest validated TPU slice (v6e-4) for data-scaling vet runs.
+    """~115M model on the cheapest validated TPU slice (v6e-4) for data-scaling vet runs.
 
     The research-credible middle between ``tpu_smoke`` (a ~5M toy for path
-    validation) and ``tpu_v4_8`` (~1B). Big enough to absorb diverse data
-    without the capacity-starvation that collapsed the v5 corpus-scaling run,
-    small enough to train cheaply (~10-12 chip-hours for a 30K-step run). Pair
-    with ``--data-loader streaming`` + prompt conditioning to push the scaling
-    into data variance rather than parameters. batch_size divides the 4 chips.
+    validation) and ``tpu_v4_8`` (~1.6B). At ~115M it is ~15x the ~5-10M model
+    whose capacity starved under the v5 corpus scale-up, yet small enough to
+    train cheaply (a 30K-step run is a few chip-hours). The count is dominated
+    by the 12 transformer blocks: the byte + AST-position ``EditTokenizer`` has
+    only ~1.3K tokens, so the embedding/output layers add ~2M, not the ~197M a
+    128K-vocab model of these dims would. Pair with ``--data-loader streaming``
+    + prompt conditioning to push scaling into data variance rather than
+    parameters. batch_size divides the 4 chips.
     """
     return ModelPreset(
         name="tpu_vet",
@@ -186,12 +189,12 @@ def tpu_vet_preset() -> ModelPreset:
         resource=ResourceConfig.with_tpu("v6e-4"),
         batch_size=256,
         learning_rate=3e-4,
-        description="~300M model on v6e-4 for cheap data-scaling experiments",
+        description="~115M model on v6e-4 for cheap data-scaling experiments",
     )
 
 
 def tpu_v4_8_preset() -> ModelPreset:
-    """Large preset for v4-8 TPU (~1B params)."""
+    """Large preset for v4-8 TPU (~1.6B params)."""
     return ModelPreset(
         name="tpu_v4_8",
         config=EditModelConfig(
@@ -211,7 +214,7 @@ def tpu_v4_8_preset() -> ModelPreset:
 
 
 def tpu_v5p_8_preset() -> ModelPreset:
-    """8B preset for v5p-8 TPU pod (~8B params, matching Marin 8b)."""
+    """Largest preset for v5p-8 TPU pod (~7B params, Marin-8b-class architecture)."""
     return ModelPreset(
         name="tpu_v5p_8",
         config=EditModelConfig(
