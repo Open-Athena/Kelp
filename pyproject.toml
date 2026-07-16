@@ -5,13 +5,24 @@ description = "Program repair via tree diffusion."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "marin-core>=0.2.46.dev202607131620",
-    "marin-levanter>=0.2.46.dev202607131620",
+    "marin-core>=0.2.12.dev202607100930",
+    "marin-levanter>=0.2.12.dev202607100930",
     "egglog",
+    "marin-zephyr>=0.2.12.dev202607100930",
+    "marin-iris>=0.2.12.dev202607100930",
+    "marin-finelog>=0.2.12.dev202607100930",
 ]
+
+[project.optional-dependencies]
+# TPU backend for JAX. Linux-only (libtpu wheels), so local mac/dev sync stays
+# clean; requested for TPU jobs via kelp-launch (extras=["tpu"]). Unlike the
+# previously-dropped marin-core[tpu] extra, this pulls only jax's own libtpu
+# (no torch / monorepo-specific uv config), so it locks in this standalone repo.
+tpu = ["jax[tpu]; sys_platform == 'linux'"]
 
 [project.scripts]
 kelp-train = "kelp.cli.train:main"
+kelp-launch = "kelp.cli.launch:main"
 kelp-evaluate = "kelp.cli.evaluate:main"
 kelp-evaluate-corpus = "kelp.cli.evaluate_corpus:main"
 kelp-evaluate-mbpp = "kelp.cli.evaluate_mbpp:main"

@@ -1,0 +1,95 @@
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tests for the pure, worker-serializable example generator."""
+
+import pickle
+import random
+
+import pytest
+
+from kelp.training.generation import GenerationConfig, TrainingExample, generate_example
+from kelp.tree.subtree_bank import SubtreeBank
+from kelp.tree.tokenizer import EditTokenizer
+
+CORPUS = [
+    "def add(a, b):\n    return a + b\n",
+    "def sub(a, b):\n    return a - b\n",
+    "def mul(a, b):\n    return a * b\n",
+    "def square(x):\n    return x * x\n",
+    "def neg(x):\n    return -x\n",
+]
+MAX_SEQ_LEN = 128
+DEFAULT_GEN_CFG = GenerationConfig()
+
+
+@pytest.fixture
+def bank():
+    return SubtreeBank.from_corpus(CORPUS)
+
+
+@pytest.fixture
+def tokenizer():
+    return EditTokenizer(max_seq_len=MAX_SEQ_LEN)
+
+
+def _gen(bank, tokenizer, seed, *, gen_cfg=DEFAULT_GEN_CFG, max_corruption_steps=3):
+    return generate_example(
+        CORPUS[0],
+        CORPUS,
+        bank,
+        tokenizer,
+        max_corruption_steps=max_corruption_steps,
+        gen_cfg=gen_cfg,
+        rng=random.Random(seed),
+        max_seq_len=MAX_SEQ_LEN,
+    )
+
+
+def test_deterministic_for_same_seed(bank, tokenizer):
+    """A given seed always yields the identical example (reproducible pipelines)."""
+    a = _gen(bank, tokenizer, 123)
+    b = _gen(bank, tokenizer, 123)
+    assert a == b  # frozen dataclass equality covers tokens, mask, and metadata
+
+
+def test_picklable_closure_round_trips(bank, tokenizer):
+    """The generator + its args survive pickling (needed for remote workers)."""
+    payload = (generate_example, bank, tokenizer, GenerationConfig())
+    fn, bank2, tok2, cfg2 = pickle.loads(pickle.dumps(payload))
+
+    original = _gen(bank, tokenizer, 7)
+    revived = fn(
+        CORPUS[0],
+        CORPUS,
+        bank2,
+        tok2,
+        max_corruption_steps=3,
+        gen_cfg=cfg2,
+        rng=random.Random(7),
+        max_seq_len=MAX_SEQ_LEN,
+    )
+    assert revived == original
+
+
+def test_diffusion_branch_metadata(bank, tokenizer):
+    """With p_random=0, examples come from forward diffusion: is_random False,
+    corruption_steps within the allowed range."""
+    cfg = GenerationConfig(p_random=0.0)
+    found = [ex for s in range(20) if (ex := _gen(bank, tokenizer, s, gen_cfg=cfg, max_corruption_steps=3))]
+    assert found, "expected at least one valid diffusion example"
+    for ex in found:
+        assert isinstance(ex, TrainingExample)
+        assert ex.is_random is False
+        assert 1 <= ex.corruption_steps <= 3
+
+
+def test_random_branch_metadata(bank, tokenizer):
+    """With p_random=1, examples come from a random corpus program: is_random
+    True, corruption_steps 0 (no forward-diffusion depth)."""
+    cfg = GenerationConfig(p_random=1.0)
+    found = [ex for s in range(20) if (ex := _gen(bank, tokenizer, s, gen_cfg=cfg))]
+    assert found, "expected at least one valid random-branch example"
+    for ex in found:
+        assert ex.is_random is True
+        assert ex.corruption_steps == 0

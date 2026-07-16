@@ -26,19 +26,22 @@ Generates training data by:
 
 import logging
 import math
+import os
 import random as pyrandom
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import optax
+from etils import epath
 from jax.tree_util import register_dataclass
 from jaxtyping import Array
 
-from kelp.corpus import extract_docstring
-from kelp.model.checkpointing import save_checkpoint
+from kelp.model.checkpointing import (
+    load_training_checkpoint,
+    save_training_checkpoint,
+)
 from kelp.model.config import EditModelConfig
 from kelp.model.edit_model import (
     EditModelParams,
@@ -49,10 +52,15 @@ from kelp.model.layers import (
     AttentionParams,
     TransformerBlockParams,
 )
-from kelp.tree.mutation import corrupt_program
+from kelp.training.generation import GenerationConfig, generate_example
+from kelp.training.sharding import (
+    data_parallel_size,
+    make_data_parallel_mesh,
+    replicate,
+    shard_batch,
+)
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
-from kelp.tree.tree_diff import find_path
 
 logger = logging.getLogger(__name__)
 
@@ -265,14 +273,13 @@ def generate_training_example(
     rng: pyrandom.Random,
     step: int = 0,
 ) -> tuple[list[int], list[int]] | None:
-    """Generate a single training example from a clean program.
+    """Generate a single training example from a clean program (inline path).
 
-    Following the paper's forward_process_with_path:
-    1. With probability p_random, pick a random program as the 'corrupted' version
-    2. Otherwise, apply random AST mutations to corrupt the clean program
-    3. Compute TreeDiff path from corrupted back to clean
-    4. Pick a random step along the path
-    5. Encode as (token_ids, loss_mask)
+    Thin wrapper over the pure :func:`kelp.training.generation.generate_example`:
+    it resolves the curriculum-scheduled corruption difficulty for ``step`` and
+    the per-example knobs from ``config``, then returns just
+    ``(token_ids, loss_mask)`` for backward compatibility. The metadata the pure
+    core also produces is dropped here (the inline loop does not need it).
 
     Args:
         step: Current training step, used for curriculum scheduling of
@@ -280,74 +287,19 @@ def generate_training_example(
 
     Returns None if no valid training example could be generated.
     """
-    effective_max = config.effective_max_corruption_steps(step)
-
-    # Step 1: Generate a corrupted version.
-    if rng.random() < config.p_random and len(corpus) > 1:
-        # Use a random program from the corpus.
-        corrupted = rng.choice(corpus)
-        while corrupted == clean_source and len(corpus) > 1:
-            corrupted = rng.choice(corpus)
-    else:
-        # Apply random AST mutations.
-        num_steps = rng.randint(1, effective_max)
-        corrupted, _mutations = corrupt_program(
-            clean_source,
-            num_steps=num_steps,
-            bank=bank,
-            max_edit_stmts=config.max_edit_stmts,
-            rng=rng,
-        )
-
-    # Step 2: Compute TreeDiff path from corrupted to clean.
-    path = find_path(
-        corrupted,
+    example = generate_example(
         clean_source,
-        max_edit_stmts=config.max_edit_stmts,
+        corpus,
+        bank,
+        tokenizer,
+        max_corruption_steps=config.effective_max_corruption_steps(step),
+        gen_cfg=GenerationConfig.from_training_config(config),
+        rng=rng,
+        max_seq_len=max_seq_len,
     )
-
-    if not path:
+    if example is None:
         return None
-
-    # Step 3: Pick a random step along the path.
-    step_idx = rng.randrange(len(path))
-
-    # Apply all mutations before step_idx to get the intermediate program.
-    intermediate = corrupted
-    for i in range(step_idx):
-        intermediate = path[i].apply(intermediate)
-
-    # The training target is path[step_idx]: the next edit to apply.
-    target_mutation = path[step_idx]
-
-    # Step 4: Encode as training example.
-    # The edit position is the character offset in the intermediate program,
-    # which maps to a token index (1:1 for byte-level tokenizer).
-    edit_token_idx = tokenizer.char_offset_to_token_index(intermediate, target_mutation.start)
-
-    # Skip if the edit position overflows the tokenizer's position range.
-    if edit_token_idx >= tokenizer.num_position_tokens:
-        return None
-
-    # Optionally include a docstring prompt from the *clean* source.
-    prompt_source: str | None = None
-    if tokenizer.prompt_tokens:
-        docstring = extract_docstring(clean_source)
-        if docstring and rng.random() < config.p_prompt:
-            prompt_source = docstring
-
-    token_ids, loss_mask = tokenizer.encode_training_example(
-        context_source=intermediate,
-        edit_position_token_idx=edit_token_idx,
-        replacement_source=target_mutation.replacement,
-        prompt_source=prompt_source,
-    )
-
-    # Truncate or skip if too long.
-    if len(token_ids) > max_seq_len:
-        return None
-
-    return token_ids, loss_mask
+    return example.token_ids, example.loss_mask
 
 
 def create_edit_data_iter(
@@ -356,15 +308,17 @@ def create_edit_data_iter(
     tokenizer: EditTokenizer,
     config: EditTrainingConfig,
     seed: int = 42,
+    start_step: int = 0,
 ) -> Iterator[dict[str, Array]]:
     """Create a training data iterator for tree diffusion.
 
     Yields batches of (token_ids, loss_mask) arrays. Each batch is tagged
     with the current step so generate_training_example can use
-    curriculum-based corruption difficulty.
+    curriculum-based corruption difficulty. ``start_step`` aligns that
+    curriculum when resuming a run (the data sequence itself is not replayed).
     """
     rng = pyrandom.Random(seed)
-    step = 0
+    step = start_step
 
     while True:
         batch_token_ids: list[list[int]] = []
@@ -409,7 +363,9 @@ def train_edit_model(
     config: EditTrainingConfig,
     data_iter: Iterator[dict[str, Array]],
     initial_params: EditModelParams | None = None,
+    initial_state: "EditTrainingState | None" = None,
     log_callback: LogCallback | None = None,
+    mesh: "jax.sharding.Mesh | None" = None,
 ) -> EditModelParams:
     """Train a tree diffusion edit model.
 
@@ -417,11 +373,42 @@ def train_edit_model(
         config: Training configuration.
         data_iter: Iterator yielding batches with 'token_ids' and 'loss_mask'.
         initial_params: Optional initial parameters (for transfer learning).
+        initial_state: Optional full training state to resume from (params +
+            optimizer + step + rng), e.g. from :func:`load_resume_state`.
+            Training continues from ``initial_state.step``. Mutually exclusive
+            with ``initial_params``.
         log_callback: Optional callback for logging metrics.
+        mesh: Optional device mesh for data-parallel training. Defaults to a
+            1-D mesh over all local devices. On a single device this is a
+            no-op; on an N-chip host the batch is sharded across chips and the
+            JITted step runs SPMD with automatic gradient all-reduce.
 
     Returns:
         Trained EditModelParams.
     """
+    # Multi-host is not yet supported: the data iterators yield a per-process
+    # batch, but the mesh spans all hosts, so a plain device_put mis-assembles
+    # the global array (assembling per-process batches into a global batch is
+    # unimplemented; tracked in issue #5). Fail loudly rather than train
+    # silently-wrong across hosts. Single-host multi-chip slices (v6e-4, v5p-8)
+    # run process_count()==1 and are fine.
+    if jax.process_count() > 1:
+        raise NotImplementedError(
+            f"Multi-host training ({jax.process_count()} processes) is not yet supported: "
+            "per-process batches are not assembled into a global batch (see issue #5). "
+            "Use a single-host slice for now."
+        )
+
+    if mesh is None:
+        mesh = make_data_parallel_mesh()
+    dp_size = data_parallel_size(mesh)
+    if config.batch_size % dp_size != 0:
+        raise ValueError(
+            f"batch_size ({config.batch_size}) must be divisible by the "
+            f"data-parallel size ({dp_size} devices) for even sharding."
+        )
+    logger.info(f"Data-parallel mesh: {dp_size} device(s), batch/device={config.batch_size // dp_size}")
+
     key = jax.random.PRNGKey(config.seed)
     optimizer = create_edit_optimizer(config)
 
@@ -443,21 +430,30 @@ def train_edit_model(
         except ImportError:
             logger.warning("wandb not installed; skipping W&B logging")
 
-    if initial_params is None:
-        key, init_key = jax.random.split(key)
-        params = init_edit_params(config.model, key=init_key)
+    if initial_state is not None:
+        state = initial_state
+        start_step = int(state.step)
+        logger.info(f"Resuming training from step {start_step}")
     else:
-        params = initial_params
+        if initial_params is None:
+            key, init_key = jax.random.split(key)
+            params = init_edit_params(config.model, key=init_key)
+        else:
+            params = initial_params
+        opt_state = optimizer.init(params)
+        state = EditTrainingState(step=0, params=params, opt_state=opt_state, key=key)
+        start_step = 0
 
-    opt_state = optimizer.init(params)
-    state = EditTrainingState(step=0, params=params, opt_state=opt_state, key=key)
+    # Replicate the training state across all devices; the JITted step then
+    # runs data-parallel over batch-sharded inputs.
+    state = replicate(state, mesh)
 
     train_step = make_edit_train_step(config.model, optimizer)
 
-    logger.info(f"Starting edit model training for {config.total_steps} steps")
+    logger.info(f"Starting edit model training: steps {start_step}..{config.total_steps}")
 
-    for step in range(config.total_steps):
-        batch = next(data_iter)
+    for step in range(start_step, config.total_steps):
+        batch = shard_batch(next(data_iter), mesh)
         state, metrics = train_step(state, batch)
 
         if step % config.log_interval == 0:
@@ -471,19 +467,31 @@ def train_edit_model(
                 log_callback(step, metrics)
 
         if config.output_dir and config.checkpoint_interval > 0 and (step + 1) % config.checkpoint_interval == 0:
-            ckpt_dir = Path(config.output_dir) / f"step-{step + 1:06d}"
-            save_checkpoint(state.params, config.model, ckpt_dir)
+            ckpt_dir = epath.Path(config.output_dir) / f"step-{step + 1:06d}"
+            save_training_checkpoint(state.params, state.opt_state, state.step, state.key, config.model, ckpt_dir)
 
-    # Save final checkpoint.
+    # Save final checkpoint (resumable, like the interval checkpoints).
     if config.output_dir:
-        ckpt_dir = Path(config.output_dir) / f"step-{config.total_steps:06d}"
-        save_checkpoint(state.params, config.model, ckpt_dir)
+        ckpt_dir = epath.Path(config.output_dir) / f"step-{config.total_steps:06d}"
+        save_training_checkpoint(state.params, state.opt_state, state.step, state.key, config.model, ckpt_dir)
 
     if wandb_run is not None:
         wandb_run.finish()
 
     logger.info("Training complete")
     return state.params
+
+
+def load_resume_state(ckpt_dir: str | os.PathLike, config: EditTrainingConfig) -> "EditTrainingState":
+    """Assemble an :class:`EditTrainingState` from a resumable checkpoint.
+
+    Rebuilds the optimizer from ``config`` (needed to restore the optimizer
+    state's structure) and returns the full state to hand to
+    :func:`train_edit_model` as ``initial_state``.
+    """
+    optimizer = create_edit_optimizer(config)
+    params, opt_state, step, key, _model_config = load_training_checkpoint(ckpt_dir, optimizer)
+    return EditTrainingState(step=step, params=params, opt_state=opt_state, key=key)
 
 
 def _log_edit_metrics(step: int, metrics: dict) -> None:

@@ -34,14 +34,18 @@ Usage:
 
 import argparse
 import logging
+import os
 import random
-import sys
 from dataclasses import replace
 
+from kelp.cli._logging import configure_logging
 from kelp.corpus import TOY_CORPUS, load_corpus
+from kelp.model.checkpointing import find_best_checkpoint
+from kelp.training.distributed import bootstrap_distributed
 from kelp.training.engine import (
     EditTrainingConfig,
     create_edit_data_iter,
+    load_resume_state,
     train_edit_model,
 )
 from kelp.training.presets import PRESETS, get_preset
@@ -49,11 +53,6 @@ from kelp.tree.augmentation import augment_bank
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -112,12 +111,51 @@ def parse_args() -> argparse.Namespace:
         default=0.5,
         help="Probability of including a docstring prompt when available (default: 0.5)",
     )
+    parser.add_argument(
+        "--data-loader",
+        type=str,
+        default="inline",
+        choices=["inline", "streaming"],
+        help="Data pipeline: 'inline' (single-process, default) or 'streaming' "
+        "(concurrent seed-driven generation; keeps fast accelerators fed)",
+    )
+    parser.add_argument(
+        "--gen-workers",
+        type=int,
+        default=None,
+        help="Streaming: CPU generation processes (default: cpu_count-2). Ignored for inline.",
+    )
+    parser.add_argument(
+        "--reuse-factor",
+        type=int,
+        default=1,
+        help="Streaming: times each generated example is fed before eviction (default: 1)",
+    )
+    parser.add_argument(
+        "--buffer-size",
+        type=int,
+        default=1024,
+        help="Streaming: shuffle-buffer capacity in examples (default: 1024)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=True,
+        help="Resume from the latest checkpoint in --output-dir if one exists (default: on). "
+        "This makes preemptible runs recover automatically.",
+    )
+    parser.add_argument("--no-resume", dest="resume", action="store_false", help="Always start from step 0.")
     return parser.parse_args()
 
 
 def main():
     """Main entry point."""
+    configure_logging()  # force a stdout handler that survives absl/JAX (Iris-observable)
     args = parse_args()
+
+    # Bring up JAX distributed from Iris job metadata before any device use.
+    # No-op off-cluster (laptop/CI/single host).
+    bootstrap_distributed()
 
     preset = get_preset(args.preset)
     model_config = preset.config
@@ -156,7 +194,7 @@ def main():
         output_dir=args.output_dir,
         seed=args.seed,
         wandb_entity=args.wandb_entity,
-        wandb_project=args.wandb_project,
+        wandb_project=args.wandb_project or None,  # empty string disables W&B
         wandb_run_name=args.wandb_run_name,
         max_corruption_steps=args.max_corruption_steps,
         corruption_curriculum=args.corruption_curriculum,
@@ -164,13 +202,42 @@ def main():
         p_prompt=args.p_prompt,
     )
 
-    data_iter = create_edit_data_iter(
-        corpus=corpus,
-        bank=bank,
-        tokenizer=tokenizer,
-        config=train_cfg,
-        seed=args.seed,
-    )
+    # Resume from the latest checkpoint in output_dir if one exists (e.g. after a
+    # preemption) -- full state (params + optimizer + step + rng) is restored.
+    initial_state = None
+    start_step = 0
+    if args.resume and args.output_dir:
+        latest = find_best_checkpoint(args.output_dir)
+        if latest is not None:
+            logger.info(f"Resuming from checkpoint: {latest}")
+            initial_state = load_resume_state(latest, train_cfg)
+            start_step = int(initial_state.step)
+
+    if args.data_loader == "streaming":
+        from kelp.training.streaming import create_streaming_data_iter
+
+        workers = args.gen_workers if args.gen_workers is not None else max(1, (os.cpu_count() or 2) - 2)
+        logger.info(f"Streaming dataloader: {workers} gen workers, reuse={args.reuse_factor}")
+        data_iter = create_streaming_data_iter(
+            corpus=corpus,
+            bank=bank,
+            tokenizer=tokenizer,
+            config=train_cfg,
+            seed=args.seed,
+            num_workers=workers,
+            reuse_factor=args.reuse_factor,
+            buffer_size=args.buffer_size,
+            start_step=start_step,
+        )
+    else:
+        data_iter = create_edit_data_iter(
+            corpus=corpus,
+            bank=bank,
+            tokenizer=tokenizer,
+            config=train_cfg,
+            seed=args.seed,
+            start_step=start_step,
+        )
 
     logger.info(f"Training config: {train_cfg}")
     logger.info(f"Model config: {model_config}")
@@ -178,6 +245,7 @@ def main():
     train_edit_model(
         config=train_cfg,
         data_iter=data_iter,
+        initial_state=initial_state,
     )
 
     logger.info("Training complete!")

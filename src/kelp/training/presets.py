@@ -137,6 +137,31 @@ def single_gpu_preset() -> ModelPreset:
     )
 
 
+def tpu_smoke_preset() -> ModelPreset:
+    """Smallest TPU slice (v6e-4) with a tiny model for validating the launch path.
+
+    Cheap end-to-end check of distributed init + data-parallel sharding + GCS
+    checkpointing on real hardware -- not a research-scale run. batch_size is
+    divisible by the 4 chips.
+    """
+    return ModelPreset(
+        name="tpu_smoke",
+        config=EditModelConfig(
+            vocab_size=256,  # byte-level; overridden to tokenizer vocab in train.py
+            hidden_dim=256,
+            intermediate_dim=1024,
+            num_layers=4,
+            num_heads=4,
+            num_kv_heads=4,
+            max_seq_len=256,
+        ),
+        resource=ResourceConfig.with_tpu("v6e-4"),
+        batch_size=8,
+        learning_rate=1e-3,
+        description="Smallest TPU slice (v6e-4) for smoke-testing the launch path",
+    )
+
+
 def tpu_v4_8_preset() -> ModelPreset:
     """Large preset for v4-8 TPU (~1B params)."""
     return ModelPreset(
@@ -182,6 +207,7 @@ PRESETS = {
     "overnight_cpu": overnight_cpu_preset,
     "laptop": laptop_preset,
     "single_gpu": single_gpu_preset,
+    "tpu_smoke": tpu_smoke_preset,
     "tpu_v4_8": tpu_v4_8_preset,
     "tpu_v5p_8": tpu_v5p_8_preset,
 }

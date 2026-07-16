@@ -1894,6 +1894,13 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/89/82/5ab5211079a151b6f661529369c0c8e98ec64cabf5c0cf22a0a05af124d8/jax-0.10.2-py3-none-any.whl", hash = "sha256:724d73c4678d8b06f6a6ab4db1b8a2fea8cd4f1e2c2564f99601634ec7b8d1c6", size = 3219515, upload-time = "2026-06-17T23:42:41.259Z" },
 ]
 
+[package.optional-dependencies]
+tpu = [
+    { name = "jaxlib", marker = "sys_platform != 'win32'" },
+    { name = "libtpu", marker = "sys_platform != 'win32'" },
+    { name = "requests", marker = "sys_platform != 'win32'" },
+]
+
 [[package]]
 name = "jaxlib"
 version = "0.10.2"
@@ -2107,7 +2114,15 @@ source = { editable = "." }
 dependencies = [
     { name = "egglog" },
     { name = "marin-core" },
+    { name = "marin-finelog" },
+    { name = "marin-iris" },
     { name = "marin-levanter" },
+    { name = "marin-zephyr" },
+]
+
+[package.optional-dependencies]
+tpu = [
+    { name = "jax", extra = ["tpu"], marker = "sys_platform == 'linux'" },
 ]
 
 [package.dev-dependencies]
@@ -2121,9 +2136,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "egglog" },
-    { name = "marin-core", specifier = ">=0.2.46.dev202607131620" },
-    { name = "marin-levanter", specifier = ">=0.2.46.dev202607131620" },
+    { name = "jax", extras = ["tpu"], marker = "sys_platform == 'linux' and extra == 'tpu'" },
+    { name = "marin-core", specifier = ">=0.2.12.dev202607100930" },
+    { name = "marin-finelog", specifier = ">=0.2.12.dev202607100930" },
+    { name = "marin-iris", specifier = ">=0.2.12.dev202607100930" },
+    { name = "marin-levanter", specifier = ">=0.2.12.dev202607100930" },
+    { name = "marin-zephyr", specifier = ">=0.2.12.dev202607100930" },
 ]
+provides-extras = ["tpu"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2204,6 +2224,18 @@ wheels = [
 ]
 
 [[package]]
+name = "libtpu"
+version = "0.0.42.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/97/8b45cbf0220295c4934e223e3fe10f8ee00c0fd19179adf5a3df4dd1e809/libtpu-0.0.42.1-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:4026b215b42bca07331aac91d31659394b128b19df848aa6449b30fe16b335a6", size = 212829913, upload-time = "2026-06-17T18:54:50.505Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/ab/b5f13b1754d9d95686e80ace14633626a44b197dd9a2534f03a6503e5cf9/libtpu-0.0.42.1-cp313-cp313-manylinux_2_31_x86_64.whl", hash = "sha256:32f216b88cf04d3b82693378e5612bd23e3b8b88afc72546561830284a2b0091", size = 212830157, upload-time = "2026-06-17T18:55:30.49Z" },
+    { url = "https://files.pythonhosted.org/packages/22/07/b13b81cc7e8f55aa1ec257bef14bebac933f2534699277ac48ade22a794e/libtpu-0.0.42.1-cp313-cp313t-manylinux_2_31_x86_64.whl", hash = "sha256:38c984c89aab1e6e49588ad9f8fd902d67a775c7ce08948909fdaa7686d16efc", size = 212830801, upload-time = "2026-06-17T18:55:20.762Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/d5/36b502de2ef14ee12eee7997a8086903ea933e76bd3de38261e0ec7c62a7/libtpu-0.0.42.1-cp314-cp314-manylinux_2_31_x86_64.whl", hash = "sha256:bffd6bf3944473e394cbed1d7f0875e7b338e3f8d278bfd8687c7450724b1e47", size = 212830170, upload-time = "2026-06-17T18:55:00.976Z" },
+    { url = "https://files.pythonhosted.org/packages/46/e6/7da25eececfa243a2d9db1a03862f5cb548376d4ea63b2f5d2fbf8fc2b55/libtpu-0.0.42.1-cp314-cp314t-manylinux_2_31_x86_64.whl", hash = "sha256:1149f6852e08f97c76572ed8e5064131e384a5e5f72fbe2dabb9c807134a3e3f", size = 212830703, upload-time = "2026-06-17T18:55:57.012Z" },
+]
+
+[[package]]
 name = "marin-core"
 version = "0.2.46.dev202607131620"
 source = { registry = "https://pypi.org/simple" }
@@ -2248,7 +2280,7 @@ wheels = [
 
 [[package]]
 name = "marin-finelog"
-version = "0.2.10"
+version = "0.2.12.dev202607100930"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -2262,9 +2294,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/ea/1e53cc39aeb66d747533f6e423f5f202ddd1be9a482406345f9b839217f8/marin_finelog-0.2.10.tar.gz", hash = "sha256:2881a021ad2ac5f0a9a75fada759a130d1533d0e87f97e2f5119de68753d4a0e", size = 52204, upload-time = "2026-06-16T15:21:07.603Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9b/b6/8e304a10dc2f20265176a9dee7f4a42ec0965327330e339e266e21eb3228/marin_finelog-0.2.12.dev202607100930.tar.gz", hash = "sha256:098fdc39f5e8caeb3a689ca9f0abff2640510f55b698ab44481cace851d3a1b8", size = 70252, upload-time = "2026-07-10T10:02:36.524Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b6/d4/cebe857527ff2703edc2def8748cbe9fd84315bfe24c6e01463a3bb83f58/marin_finelog-0.2.10-py3-none-any.whl", hash = "sha256:9b240454f1f997c0aede999f871051eb5349f7c1b0003c1d2653c69a9f2cefa0", size = 53400, upload-time = "2026-06-16T15:20:53.35Z" },
+    { url = "https://files.pythonhosted.org/packages/82/06/2ef1f4dfa096e857a6cbe7322aa252cd0a5360888e1edb3ec9a12276aefb/marin_finelog-0.2.12.dev202607100930-py3-none-any.whl", hash = "sha256:a5934c6cc4a0cc4200800450b44d32ea005a189503bd3d0457cf571fd7bee237", size = 69749, upload-time = "2026-07-10T10:02:23.18Z" },
 ]
 
 [[package]]
