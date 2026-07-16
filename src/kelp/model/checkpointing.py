@@ -29,8 +29,10 @@ import logging
 import os
 
 import jax
+import numpy as np
 import orbax.checkpoint as ocp
 from etils import epath
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from levanter.grug.attention import RotaryConfig
 
 from kelp.model.config import EditModelConfig
@@ -119,6 +121,19 @@ def load_checkpoint(ckpt_dir: str | os.PathLike) -> tuple[EditModelParams, EditM
     # per-leaf shapes/dtypes (and pytree structure) without allocating, so
     # Orbax rebuilds the registered dataclass tree rather than plain dicts.
     abstract_params = jax.eval_shape(lambda: init_edit_params(config, key=jax.random.PRNGKey(0)))
+
+    # Attach a sharding for the *current* device topology so Orbax reshards the
+    # saved arrays onto wherever we load. Without this the restore reuses the
+    # topology the checkpoint was saved with (e.g. replicated across 4 TPU
+    # chips) and fails on a different one (e.g. a single CPU for eval). Params
+    # are replicated; this loads them replicated on whatever devices exist.
+    devices = jax.devices()
+    mesh = Mesh(np.asarray(devices).reshape(len(devices)), ("dp",))
+    replicated = NamedSharding(mesh, PartitionSpec())
+    abstract_params = jax.tree.map(
+        lambda s: jax.ShapeDtypeStruct(s.shape, s.dtype, sharding=replicated), abstract_params
+    )
+
     ckptr = ocp.StandardCheckpointer()
     params = ckptr.restore(params_path, target=abstract_params)
 
