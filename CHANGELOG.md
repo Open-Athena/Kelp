@@ -35,6 +35,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add pad_token_id to TreeDiffusionConfig instead of hardcoding 0 (#9)
 
 ### Changed
+- Concurrent seed-driven generation dataloader (streaming synthesis) (#122)
+- Make the example generator pure and worker-serializable (#119)
 - GCS-backed checkpointing for ephemeral containers (#116)
 - Iris submission entrypoint (consume preset.resource) (#117)
 - Iris<->JAX distributed init via Levanter (#115)
