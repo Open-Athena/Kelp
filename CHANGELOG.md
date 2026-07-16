@@ -35,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add pad_token_id to TreeDiffusionConfig instead of hardcoding 0 (#9)
 
 ### Changed
+- Launcher dev->cluster submit + observability follow-ups (#125)
 - Concurrent seed-driven generation dataloader (streaming synthesis) (#122)
 - Make the example generator pure and worker-serializable (#119)
 - GCS-backed checkpointing for ephemeral containers (#116)
