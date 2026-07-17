@@ -47,6 +47,7 @@ import time
 import jax
 from etils import epath
 
+from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
 from kelp.cli._logging import configure_logging
 from kelp.corpus import extract_docstring, is_valid_python, load_corpus
 from kelp.inference.beam_search import best_of_n
@@ -240,11 +241,37 @@ def main():
     logger.info(f"Inference: best-of-{args.n_best_of}, max_depth={args.max_depth}")
     logger.info("")
 
-    all_results = []
+    # Durable per-program results (fingerprinted by config) so a preemption
+    # resumes instead of restarting from program 0.
+    output_path = args.output or str(ckpt_dir / "corpus_eval_results.json")
+    shards = shard_dir(
+        output_path,
+        eval_fingerprint(
+            {
+                "checkpoint": str(ckpt_dir),
+                "seed": args.seed,
+                "num_tasks": args.num_tasks,  # changes which programs are sampled per index
+                "num_corruptions": args.num_corruptions,
+                "corruption_steps": args.corruption_steps,
+                "n_best_of": args.n_best_of,
+                "max_depth": args.max_depth,
+                "corpus_file": args.corpus_file,
+            }
+        ),
+    )
+    shards.mkdir(parents=True, exist_ok=True)
+    completed = load_completed(shards, "index")
+    if completed:
+        logger.info(f"Resuming: {len(completed)} of {len(eval_programs)} programs already complete in {shards}")
+
     start_time = time.time()
 
     for i, prog in enumerate(eval_programs):
-        key, task_key = jax.random.split(key)
+        if i in completed:
+            continue
+        # Fold the sample index into the base key so each program's randomness
+        # is order-independent -- identical whether fresh or resumed.
+        prog_key = jax.random.fold_in(key, i)
         # Use first line as the program name (usually 'def func_name(...):').
         first_line = prog.strip().split("\n")[0][:60]
         logger.info(f"[{i + 1}/{len(eval_programs)}] {first_line}")
@@ -255,13 +282,15 @@ def main():
             config=config,
             tokenizer=tokenizer,
             bank=bank,
-            key=task_key,
+            key=prog_key,
             num_corruptions=args.num_corruptions,
             corruption_steps=args.corruption_steps,
             max_depth=args.max_depth,
             n_best_of=args.n_best_of,
         )
-        all_results.append(result)
+        result["index"] = i
+        write_result(shards, result, "index")
+        completed[i] = result
 
         logger.info(
             f"  valid={result['valid_rate']:.1%} exact={result['exact_match_rate']:.1%} "
@@ -270,6 +299,9 @@ def main():
         )
 
     elapsed = time.time() - start_time
+
+    # Aggregate over all completed programs (freshly computed + resumed), in sample order.
+    all_results = [completed[i] for i in range(len(eval_programs)) if i in completed]
 
     # Only include programs that had at least one corruption trial.
     tasks_with_trials = [r for r in all_results if r["num_trials"] > 0]
@@ -302,8 +334,7 @@ def main():
     logger.info(f"{'Avg candidates per program':<35} {avg_candidates:>10.1f}")
     logger.info("=" * 70)
 
-    # Save results.
-    output_path = args.output or str(ckpt_dir / "corpus_eval_results.json")
+    # Save the aggregated summary (output_path computed above for the shard dir).
     results_data = {
         "checkpoint": str(ckpt_dir),
         "config": {

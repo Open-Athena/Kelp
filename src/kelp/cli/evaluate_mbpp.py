@@ -44,6 +44,7 @@ import time
 import jax
 from etils import epath
 
+from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
 from kelp.cli._logging import configure_logging
 from kelp.corpus import is_valid_python, load_corpus
 from kelp.inference.beam_search import best_of_n
@@ -289,33 +290,22 @@ def _log_eval_to_wandb(args: argparse.Namespace, ckpt_dir: epath.Path, metrics: 
     logger.info(f"Logged eval metrics to W&B: {run.url}")
 
 
-def _tasks_dir(output_path: str) -> epath.Path:
-    """Per-task result directory next to the summary JSON (durable eval progress)."""
-    out = epath.Path(output_path)
-    return out.parent / f"{out.stem}-tasks"
-
-
-def _load_completed(tasks_dir: epath.Path) -> dict[int, dict]:
-    """Load already-computed per-task results (keyed by task_id) so a preempted
-    eval resumes instead of restarting from task 0."""
-    if not tasks_dir.exists():
-        return {}
-    completed: dict[int, dict] = {}
-    for f in tasks_dir.iterdir():
-        if not f.name.endswith(".json"):
-            continue
-        try:
-            r = json.loads(f.read_text())
-            completed[int(r["task_id"])] = r
-        except (ValueError, KeyError):
-            continue  # skip a partially-written/corrupt shard; it will be recomputed
-    return completed
-
-
-def _write_task_result(tasks_dir: epath.Path, result: dict) -> None:
-    """Durably persist one task's result so a preemption doesn't lose it."""
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f"task-{result['task_id']}.json").write_text(json.dumps(result))
+def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
+    """Fingerprint of the config that determines a task's result, so re-runs
+    with different parameters get a fresh shard dir instead of stale results.
+    ``max_tasks`` is excluded: it changes which tasks run, not any task's result,
+    so a wider run can reuse a narrower one's shards."""
+    return eval_fingerprint(
+        {
+            "checkpoint": str(ckpt_dir),
+            "seed": args.seed,
+            "num_corruptions": args.num_corruptions,
+            "corruption_steps": args.corruption_steps,
+            "n_best_of": args.n_best_of,
+            "max_depth": args.max_depth,
+            "corpus_file": args.corpus_file,
+        }
+    )
 
 
 def main():
@@ -361,9 +351,12 @@ def main():
     logger.info("")
 
     # Durable per-task results so a preemption resumes instead of restarting.
+    # The shard dir is fingerprinted by the eval config so a re-run with
+    # different parameters doesn't reuse stale results.
     output_path = args.output or str(ckpt_dir / "mbpp_eval_results.json")
-    tasks_dir = _tasks_dir(output_path)
-    completed = _load_completed(tasks_dir)
+    tasks_dir = shard_dir(output_path, _eval_fingerprint(args, ckpt_dir))
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    completed = load_completed(tasks_dir, "task_id")
     if completed:
         logger.info(f"Resuming: {len(completed)} of {len(eval_tasks)} tasks already complete in {tasks_dir}")
 
@@ -391,7 +384,7 @@ def main():
             n_best_of=args.n_best_of,
             max_depth=args.max_depth,
         )
-        _write_task_result(tasks_dir, result)
+        write_result(tasks_dir, result, "task_id")
         completed[tid] = result
 
         logger.info(

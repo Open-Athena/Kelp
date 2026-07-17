@@ -1,11 +1,12 @@
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for MBPP eval helpers."""
+"""Tests for MBPP eval helpers and the shared resume store."""
 
 from etils import epath
 
-from kelp.cli.evaluate_mbpp import _checkpoint_step, _load_completed, _tasks_dir, _write_task_result
+from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
+from kelp.cli.evaluate_mbpp import _checkpoint_step
 
 
 def test_checkpoint_step_parses_step_dir():
@@ -16,19 +17,29 @@ def test_checkpoint_step_parses_step_dir():
     assert _checkpoint_step(epath.Path("gs://b/run/latest")) is None
 
 
-def test_tasks_dir_derived_from_output():
-    assert _tasks_dir("gs://b/run/step-030000-mbpp.json").name == "step-030000-mbpp-tasks"
+def test_shard_dir_derived_from_output_and_fingerprint():
+    d = shard_dir("gs://b/run/step-030000-mbpp.json", "abc123")
+    assert d.name == "step-030000-mbpp-tasks-abc123"
 
 
-def test_task_results_persist_and_reload_for_resume(tmp_path):
-    """Per-task results are keyed by task_id and survive a reload -- the basis
-    for resuming a preempted eval instead of restarting from task 0."""
-    tasks_dir = _tasks_dir(str(tmp_path / "run" / "mbpp.json"))
-    assert _load_completed(tasks_dir) == {}  # nothing written yet
+def test_fingerprint_changes_with_config():
+    """A different eval config yields a different shard dir, so a re-run with
+    new parameters doesn't silently reuse stale per-task shards."""
+    base = {"n_best_of": 16, "seed": 42}
+    assert eval_fingerprint(base) == eval_fingerprint(dict(base))  # stable
+    assert eval_fingerprint(base) != eval_fingerprint({**base, "n_best_of": 8})
 
-    _write_task_result(tasks_dir, {"task_id": 7, "avg_test_pass_rate": 0.5})
-    _write_task_result(tasks_dir, {"task_id": 42, "avg_test_pass_rate": 0.1})
 
-    loaded = _load_completed(tasks_dir)
+def test_results_persist_and_reload_for_resume(tmp_path):
+    """Per-item results are keyed by id and survive a reload -- the basis for
+    resuming a preempted eval instead of restarting from item 0."""
+    shards = shard_dir(str(tmp_path / "run" / "mbpp.json"), "fp")
+    assert load_completed(shards, "task_id") == {}  # nothing written yet
+
+    shards.mkdir(parents=True, exist_ok=True)
+    write_result(shards, {"task_id": 7, "avg_test_pass_rate": 0.5}, "task_id")
+    write_result(shards, {"task_id": 42, "avg_test_pass_rate": 0.1}, "task_id")
+
+    loaded = load_completed(shards, "task_id")
     assert set(loaded) == {7, 42}
     assert loaded[7]["avg_test_pass_rate"] == 0.5

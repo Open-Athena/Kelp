@@ -52,20 +52,25 @@ def load_corpus(path: str) -> list[str]:
 
     Programs are separated by lines containing only '# ---'.
     This allows programs to contain internal blank lines. Leading/trailing
-    blank lines are stripped from every program identically. The path is read
-    via ``etils.epath`` so ``gs://`` corpora work without a local copy.
+    blank lines are stripped from every program identically. The path is opened
+    via ``etils.epath`` so ``gs://`` corpora work without a local copy, and
+    lines are streamed (not slurped) so large corpora don't sit in memory. We
+    iterate the file object rather than ``str.splitlines()`` because the latter
+    also splits on form-feed / NEL / Unicode line separators that are valid
+    bytes inside Python source and would corrupt those programs.
     """
     programs: list[str] = []
     current_lines: list[str] = []
 
-    for line in epath.Path(path).read_text().splitlines():
-        if line.rstrip() == CORPUS_SEPARATOR:
-            program = _finalize_program(current_lines)
-            if program is not None:
-                programs.append(program)
-            current_lines = []
-        else:
-            current_lines.append(line.rstrip())
+    with epath.Path(path).open("r") as f:
+        for line in f:
+            if line.rstrip() == CORPUS_SEPARATOR:
+                program = _finalize_program(current_lines)
+                if program is not None:
+                    programs.append(program)
+                current_lines = []
+            else:
+                current_lines.append(line.rstrip())
 
     program = _finalize_program(current_lines)
     if program is not None:
