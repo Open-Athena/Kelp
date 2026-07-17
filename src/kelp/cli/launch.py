@@ -60,24 +60,32 @@ def _device_summary(resources: ResourceConfig) -> str:
 
 def build_job_request(
     preset_name: str,
-    train_args: list[str],
+    passthrough_args: list[str],
     *,
     name: str,
+    module: str = "kelp.cli.train",
+    inject_preset: bool = True,
     image: str | None = None,
     env_names: tuple[str, ...] = DEFAULT_ENV_PASSTHROUGH,
     replicas: int | None = None,
     environ: dict[str, str] | None = None,
 ) -> JobRequest:
-    """Build a fray JobRequest that runs kelp-train under the preset's resources.
+    """Build a fray JobRequest that runs a Kelp module under a preset's resources.
 
-    Pure and side-effect-free (reads ``environ`` for env passthrough, defaulting
-    to ``os.environ``) so it can be unit-tested without a cluster.
+    The preset selects only the accelerator slice; ``module`` chooses the
+    entrypoint (``kelp.cli.train`` for training, ``kelp.cli.evaluate_mbpp`` for
+    eval, ...). ``inject_preset`` passes ``--preset <name>`` to the module (the
+    trainer reads it; eval modules take the config from the checkpoint, so they
+    set this False). Pure and side-effect-free (reads ``environ`` for env
+    passthrough, defaulting to ``os.environ``) so it can be unit-tested without
+    a cluster.
     """
     environ = environ if environ is not None else dict(os.environ)
     preset = get_preset(preset_name)
     resources = preset.resource
 
-    command_args = ["-m", "kelp.cli.train", "--preset", preset_name, *train_args]
+    preset_flag = ["--preset", preset_name] if inject_preset else []
+    command_args = ["-m", module, *preset_flag, *passthrough_args]
     entrypoint = Entrypoint.from_binary("python", command_args)
 
     # TPU jobs need JAX's TPU backend (libtpu). It lives in the `tpu` optional
@@ -183,9 +191,13 @@ def main(argv: list[str] | None = None) -> None:
     request = build_job_request(
         args.preset, train_args, name=name, image=args.image, env_names=env_names, replicas=args.replicas
     )
+    _submit_or_dry_run(request, args.preset, submit=args.submit, cluster=args.cluster, name=name)
 
-    if not args.submit:
-        print(format_dry_run(request, args.preset))
+
+def _submit_or_dry_run(request: JobRequest, preset_name: str, *, submit: bool, cluster: str, name: str) -> None:
+    """Print the launch plan, or submit to Iris when ``submit`` is set."""
+    if not submit:
+        print(format_dry_run(request, preset_name))
         return
 
     # Submit to the cluster explicitly. fray's current_client() returns a
@@ -199,12 +211,67 @@ def main(argv: list[str] | None = None) -> None:
     from fray.iris_backend import FrayIrisClient
     from iris.cli.connect import open_iris_client
 
-    logger.info("Submitting job %r to Iris cluster %s", name, args.cluster)
-    with open_iris_client(cluster_name=args.cluster, workspace=Path.cwd()) as iris_client:
+    logger.info("Submitting job %r to Iris cluster %s", name, cluster)
+    with open_iris_client(cluster_name=cluster, workspace=Path.cwd()) as iris_client:
         client = FrayIrisClient.from_iris_client(iris_client)
         handle = client.submit(request)
     logger.info("Submitted: job_id=%s", handle.job_id)
     print(handle.job_id)
+
+
+def parse_eval_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Launch a Kelp eval run on Marin/Iris compute (reads gs:// checkpoints).",
+        epilog="Arguments after '--' are forwarded to the eval module.",
+    )
+    parser.add_argument(
+        "--preset",
+        type=str,
+        default="tpu_vet",
+        choices=list(PRESETS.keys()),
+        help="Preset whose resources (accelerator slice) the eval runs on. The model config comes "
+        "from the checkpoint, so this only picks the slice (default: tpu_vet -> v6e-4).",
+    )
+    parser.add_argument(
+        "--module",
+        type=str,
+        default="kelp.cli.evaluate_mbpp",
+        help="Eval entrypoint module (default: kelp.cli.evaluate_mbpp).",
+    )
+    parser.add_argument("--name", type=str, default=None, help="Job name (default: kelp-eval-<preset>).")
+    parser.add_argument("--image", type=str, default=None, help="Worker Docker image (kelp + deps + gcsfs).")
+    parser.add_argument("--env", action="append", default=None, metavar="KEY", help="Env var name to pass in.")
+    parser.add_argument("--replicas", type=int, default=None, help="Number of job replicas (default: preset).")
+    parser.add_argument("--cluster", type=str, default="marin", help="Iris cluster (default: marin).")
+    parser.add_argument("--submit", action="store_true", help="Actually submit (default: dry run).")
+    parser.add_argument(
+        "eval_args",
+        nargs=argparse.REMAINDER,
+        help="Args after '--' forwarded to the eval module (e.g. --checkpoint-dir gs://... --n-best-of 16).",
+    )
+    return parser.parse_args(argv)
+
+
+def eval_main(argv: list[str] | None = None) -> None:
+    """Entrypoint for ``kelp-eval``: run an eval module on a slice, reading gs:// checkpoints."""
+    configure_logging()
+    args = parse_eval_args(argv)
+
+    eval_args = args.eval_args[1:] if args.eval_args and args.eval_args[0] == "--" else args.eval_args
+    env_names = tuple(args.env) if args.env else DEFAULT_ENV_PASSTHROUGH
+    name = args.name or f"kelp-eval-{args.preset}"
+
+    request = build_job_request(
+        args.preset,
+        eval_args,
+        name=name,
+        module=args.module,
+        inject_preset=False,
+        image=args.image,
+        env_names=env_names,
+        replicas=args.replicas,
+    )
+    _submit_or_dry_run(request, args.preset, submit=args.submit, cluster=args.cluster, name=name)
 
 
 if __name__ == "__main__":

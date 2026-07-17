@@ -40,9 +40,9 @@ import logging
 import random
 import sys
 import time
-from pathlib import Path
 
 import jax
+from etils import epath
 
 from kelp.corpus import is_valid_python, load_corpus
 from kelp.inference.beam_search import best_of_n
@@ -244,7 +244,7 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
-    checkpoint_base = Path(args.checkpoint_dir)
+    checkpoint_base = epath.Path(args.checkpoint_dir)
 
     if args.checkpoint:
         ckpt_dir = checkpoint_base / args.checkpoint
@@ -365,8 +365,7 @@ def main():
         "elapsed_seconds": elapsed,
     }
 
-    with open(output_path, "w") as f:
-        json.dump(results_data, f, indent=2)
+    epath.Path(output_path).write_text(json.dumps(results_data, indent=2))
     logger.info(f"Results saved to {output_path}")
 
     return 0

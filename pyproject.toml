@@ -23,6 +23,7 @@ tpu = ["jax[tpu]; sys_platform == 'linux'"]
 [project.scripts]
 kelp-train = "kelp.cli.train:main"
 kelp-launch = "kelp.cli.launch:main"
+kelp-eval = "kelp.cli.launch:eval_main"
 kelp-evaluate = "kelp.cli.evaluate:main"
 kelp-evaluate-corpus = "kelp.cli.evaluate_corpus:main"
 kelp-evaluate-mbpp = "kelp.cli.evaluate_mbpp:main"
