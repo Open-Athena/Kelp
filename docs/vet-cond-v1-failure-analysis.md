@@ -43,10 +43,25 @@ harder than "fix one realistic edit".
 
 The "no-op" we observe is a **fallback**: when every sampled edit is invalid, the
 beam keeps the unchanged program. `best-of-N` is largely wasted because most
-candidates are this same fallback. `generate_edit` returns `None` when the first
-token isn't a position token, the position doesn't map to a valid AST span, or the
-replacement doesn't produce valid Python — i.e. these are **position/decoding**
-failures (implicating #43 edit-position accuracy and #112.4 bracket constraints).
+candidates are this same fallback.
+
+**Why the edits fail** (instrumented, 144 samples):
+
+| failure cause | share |
+|---|---|
+| **bad position** (position token → no valid AST span) | **70%** |
+| valid edit | 23% |
+| invalid replacement (doesn't produce valid Python) | 7% |
+| first token not a position token | 0% |
+
+So the dominant failure by far is the **edit position**: the model emits a
+position token that does not correspond to a valid AST-node boundary in the
+program, so the edit can't be applied. Replacement decoding is rarely the problem
+(7%). This points squarely at **edit-position accuracy (#43)**, and suggests a
+concrete fix: **constrain the position token at decode time to valid AST
+boundaries** (mask invalid positions in the logits), exactly as replacement tokens
+are already bracket-constrained. That alone would convert most of the 70% into
+applicable edits.
 
 ### 3. Training corruption severity (200 corpus programs)
 
@@ -75,10 +90,12 @@ surrounding intact code constrains the fix, which is why the number jumps to ~27
 1. **Make the default eval realistic, and report the curve.** Default to ~1 local
    corruption with an in-context/small bank, and report repair-vs-difficulty rather
    than a single hard point. (This is #77; the sweep above is the first cut.)
-2. **Fix edit validity — the biggest lever.** ~88% of sampled edits are unusable.
-   Attack the position/decoding failures directly: edit-position accuracy (#43) and
-   the bracket-constraint guard (#112.4). Lifting validity multiplies the effect of
-   best-of-N, which currently collapses to the fallback.
+2. **Fix edit validity — the biggest lever.** ~88% of sampled edits are unusable,
+   and **70% of those are bad positions**. Constrain the position token to valid
+   AST boundaries during decoding (a decode-time mask, like the existing bracket
+   constraint on replacements), and improve edit-position accuracy (#43). Lifting
+   validity multiplies the effect of best-of-N, which currently collapses to the
+   fallback. (Replacement decoding / #112.4 is only ~7% — lower priority.)
 3. **Then** consider capacity/data. The model already produces improving edits when
    they are valid; a bigger model or more corpus variance is worth trying *after*
    (1) and (2), and should be measured on the realistic eval so the signal isn't
