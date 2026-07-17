@@ -187,7 +187,10 @@ def tpu_vet_preset() -> ModelPreset:
             max_seq_len=1024,
         ),
         resource=ResourceConfig.with_tpu("v6e-4"),
-        batch_size=256,
+        # 64 global (16/chip) fits the v6e-4's ~31GB HBM/chip in float32 at
+        # seq 1024; batch 256 OOMs (~57GB of step temporaries). Raise once
+        # bf16 compute / gradient checkpointing land (see #130-adjacent).
+        batch_size=64,
         learning_rate=3e-4,
         description="~115M model on v6e-4 for cheap data-scaling experiments",
     )
