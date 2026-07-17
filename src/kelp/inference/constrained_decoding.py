@@ -37,8 +37,10 @@ import ast
 import logging
 
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, Float
 
+from kelp.tree.ast_positions import valid_edit_start_offsets
 from kelp.tree.mutation import Mutation
 from kelp.tree.tokenizer import EditTokenizer
 
@@ -172,6 +174,30 @@ def sample_edit_with_validation(
         return mutation
 
     return None
+
+
+def compute_position_mask(source: str, tokenizer: EditTokenizer) -> Float[Array, " vocab"]:
+    """Mask allowing only valid edit-position tokens for ``source``.
+
+    Returns a (vocab_size,) mask that is 1.0 at the position tokens whose offset
+    begins an extractable AST node (i.e. where ``find_span_end`` succeeds) and
+    0.0 everywhere else. Applied at the first decode step, it forces the model to
+    pick a position an edit can actually be built at -- the dominant failure mode
+    was position tokens that mapped to no valid span (~70% of invalid edits).
+    """
+    mask = np.zeros(tokenizer.vocab_size, dtype=np.float32)
+    n = tokenizer.num_position_tokens
+    for off in valid_edit_start_offsets(source):
+        if 0 <= off < n:
+            mask[tokenizer.position_token_id(off)] = 1.0
+    return jnp.asarray(mask)
+
+
+def apply_position_constraint(
+    logits: Float[Array, " vocab"], position_mask: Float[Array, " vocab"]
+) -> Float[Array, " vocab"]:
+    """Restrict the (position) logits to the allowed positions by -inf-masking."""
+    return jnp.where(position_mask > 0, logits, jnp.float32(-1e9))
 
 
 def apply_bracket_constraints(

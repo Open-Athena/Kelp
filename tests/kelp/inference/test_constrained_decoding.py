@@ -140,3 +140,25 @@ def test_sample_edit_with_validation_invalid(tokenizer):
         tokenizer=tokenizer,
     )
     assert mutation is None
+
+
+def test_position_mask_allows_only_valid_positions():
+    """compute_position_mask marks exactly the valid edit-position tokens; the
+    constraint -inf-masks all other logits."""
+    import jax.numpy as jnp
+
+    from kelp.inference.constrained_decoding import apply_position_constraint, compute_position_mask
+    from kelp.tree.ast_positions import valid_edit_start_offsets
+    from kelp.tree.tokenizer import EditTokenizer
+
+    tok = EditTokenizer(max_seq_len=128)
+    src = "def f(x):\n    return x + 1\n"
+    mask = compute_position_mask(src, tok)
+    allowed = {int(i) for i in jnp.where(mask > 0)[0].tolist()}
+    expected = {tok.position_token_id(o) for o in valid_edit_start_offsets(src) if o < tok.num_position_tokens}
+    assert allowed == expected
+
+    out = apply_position_constraint(jnp.zeros(tok.vocab_size), mask)
+    disallowed = next(i for i in range(tok.vocab_size) if i not in allowed)
+    assert float(out[disallowed]) < -1e8
+    assert float(out[next(iter(allowed))]) == 0.0

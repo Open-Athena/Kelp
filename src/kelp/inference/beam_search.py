@@ -34,10 +34,12 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import PRNGKeyArray
+from jaxtyping import Array, Float, PRNGKeyArray
 
 from kelp.inference.constrained_decoding import (
     apply_bracket_constraints,
+    apply_position_constraint,
+    compute_position_mask,
     sample_edit_with_validation,
 )
 from kelp.model.config import EditModelConfig
@@ -93,6 +95,7 @@ def _ar_generate_tokens(
     key: PRNGKeyArray,
     temperature: float = 1.0,
     max_new_tokens: int = 64,
+    position_mask: Float[Array, " vocab"] | None = None,
 ) -> tuple[list[int], float]:
     """Autoregressively generate edit tokens (POS + replacement + EOS).
 
@@ -140,6 +143,11 @@ def _ar_generate_tokens(
 
         next_logits = logits[0, seq_len - 1, :]
 
+        # Step 0 is the POSITION token: restrict to positions that begin a valid
+        # AST span, so the edit can actually be applied (the dominant failure).
+        if step == 0 and position_mask is not None:
+            next_logits = apply_position_constraint(next_logits, position_mask)
+
         # Apply bracket constraints on replacement tokens (not on POS token).
         if step > 0:
             partial = tokenizer.decode_source(generated[1:] if len(generated) > 1 else [])
@@ -181,6 +189,7 @@ def generate_edit(
     temperature: float = 1.0,
     max_replacement_len: int = 64,
     prompt: str | None = None,
+    constrain_position: bool = True,
 ) -> tuple[Mutation | None, float]:
     """Generate a single edit from the model via autoregressive decoding.
 
@@ -220,6 +229,15 @@ def generate_edit(
 
     context_tokens = prompt_prefix + context_tokens
 
+    # Restrict the position token to offsets that begin a valid AST span. Only
+    # applied if such positions exist and fit the position vocabulary; otherwise
+    # decoding is unconstrained (and generate_edit will fail as before).
+    position_mask = None
+    if constrain_position:
+        m = compute_position_mask(source, tokenizer)
+        if bool((m > 0).any()):
+            position_mask = m
+
     generated, log_prob = _ar_generate_tokens(
         params=params,
         context_token_ids=context_tokens,
@@ -228,6 +246,7 @@ def generate_edit(
         key=key,
         temperature=temperature,
         max_new_tokens=max_replacement_len + 2,  # POS + replacement + EOS
+        position_mask=position_mask,
     )
 
     if not generated:
@@ -292,6 +311,7 @@ def beam_search(
     max_depth: int = 30,
     temperature: float = 1.0,
     prompt: str | None = None,
+    constrain_position: bool = True,
 ) -> list[BeamCandidate]:
     """Run beam search to refine programs through iterative edits.
 
@@ -337,6 +357,7 @@ def beam_search(
                     key=expansion_keys[key_idx],
                     temperature=temperature,
                     prompt=prompt,
+                    constrain_position=constrain_position,
                 )
                 key_idx += 1
 
@@ -380,6 +401,7 @@ def best_of_n(
     max_depth: int = 30,
     temperature: float = 1.0,
     prompt: str | None = None,
+    constrain_position: bool = True,
 ) -> list[BeamCandidate]:
     """Best-of-N sampling: run N independent rollouts, return all results.
 
@@ -418,6 +440,7 @@ def best_of_n(
                 key=step_key,
                 temperature=temperature,
                 prompt=prompt,
+                constrain_position=constrain_position,
             )
 
             if mutation is None:

@@ -127,6 +127,7 @@ def evaluate_mbpp_task(
     corruption_steps: int = 3,
     n_best_of: int = 16,
     max_depth: int = 10,
+    constrain_position: bool = True,
 ) -> dict:
     """Evaluate a single MBPP task across multiple corruption/repair trials."""
     clean = task["clean"]
@@ -168,6 +169,7 @@ def evaluate_mbpp_task(
             max_depth=max_depth,
             temperature=0.8,
             prompt=prompt,
+            constrain_position=constrain_position,
         )
 
         for c in candidates:
@@ -233,6 +235,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corruption-steps", type=int, default=3, help="AST mutations per corruption")
     parser.add_argument("--n-best-of", type=int, default=16, help="Number of independent rollouts")
     parser.add_argument("--max-depth", type=int, default=10, help="Maximum edit depth")
+    parser.add_argument(
+        "--constrain-position",
+        action="store_true",
+        default=True,
+        help="Mask the edit-position token to valid AST boundaries at decode time (default: on).",
+    )
+    parser.add_argument(
+        "--no-constrain-position",
+        dest="constrain_position",
+        action="store_false",
+        help="Disable the position mask (unconstrained decoding, the old behavior).",
+    )
     parser.add_argument("--max-tasks", type=int, default=50, help="Max MBPP tasks to evaluate (0=all)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--output", type=str, default=None, help="Output JSON file for results")
@@ -304,6 +318,7 @@ def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
             "n_best_of": args.n_best_of,
             "max_depth": args.max_depth,
             "corpus_file": args.corpus_file,
+            "constrain_position": args.constrain_position,
         }
     )
 
@@ -383,6 +398,7 @@ def main():
             corruption_steps=args.corruption_steps,
             n_best_of=args.n_best_of,
             max_depth=args.max_depth,
+            constrain_position=args.constrain_position,
         )
         write_result(tasks_dir, result, "task_id")
         completed[tid] = result
