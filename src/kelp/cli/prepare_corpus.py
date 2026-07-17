@@ -311,9 +311,7 @@ def stream_stack_edu_gcs(
                     if not code:
                         continue
                     files_scanned += 1
-                    functions.extend(
-                        extract_functions_from_file(code, max_length, require_docstring=require_docstring)
-                    )
+                    functions.extend(extract_functions_from_file(code, max_length, require_docstring=require_docstring))
                     if files_scanned % 5000 == 0:
                         logger.info(f"    Scanned {files_scanned} files, {len(functions)} functions so far...")
                     if len(functions) >= max_functions:
