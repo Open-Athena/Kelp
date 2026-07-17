@@ -104,3 +104,27 @@ surrounding intact code constrains the fix, which is why the number jumps to ~27
 **Bottom line:** Kelp repairs realistic corruptions ~27% (best-of-16) today, and
 the main ceiling is that most decoded edits are invalid. The most valuable next
 work is a realistic eval default + an edit-validity fix — not scaling the model.
+
+## Update: the position-mask prototype was measured — neutral (valid ≠ correct)
+
+We prototyped the decode-time position mask (constrain the position token to valid
+AST boundaries) and A/B'd it on the cluster (50 tasks each, no retraining):
+
+| setting | unconstrained | constrained |
+|---|---|---|
+| realistic (steps=1, small bank) | 27.3% | **26.7%** |
+| hard (steps=3, big bank) | 5.3% | **8.0%** |
+
+Edit **validity** jumped from 23% → **90%** and "improving" edits 32 → 94, yet
+functional repair barely moved (neutral on realistic, +2.7pt on hard). Conclusion:
+**valid ≠ correct** — forcing a valid position just relocates the model to its best
+*valid* spot, which is often the wrong one, and drops the useful no-op fallback.
+The model's position *calibration* is the bottleneck, and inference masking can't
+fix it. The mask is kept as an off-by-default research flag.
+
+**This sharpens the plan:** the lever is the **training task**. Highest-value next
+step (and the natural continuation of #77): replace alien subtree-swap corruption
+with **realistic, in-context near-miss corruption** — apply e-graph *near-miss*
+rewrites (e.g. `+`↔`-`, `<`↔`<=`, drop a `not`) to the program's own expressions,
+so the model learns to localize and fix plausible single-operator bugs. Retrain,
+then re-measure on the realistic eval.

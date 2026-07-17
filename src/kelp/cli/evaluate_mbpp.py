@@ -127,7 +127,7 @@ def evaluate_mbpp_task(
     corruption_steps: int = 3,
     n_best_of: int = 16,
     max_depth: int = 10,
-    constrain_position: bool = True,
+    constrain_position: bool = False,
 ) -> dict:
     """Evaluate a single MBPP task across multiple corruption/repair trials."""
     clean = task["clean"]
@@ -238,14 +238,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--constrain-position",
         action="store_true",
-        default=True,
-        help="Mask the edit-position token to valid AST boundaries at decode time (default: on).",
-    )
-    parser.add_argument(
-        "--no-constrain-position",
-        dest="constrain_position",
-        action="store_false",
-        help="Disable the position mask (unconstrained decoding, the old behavior).",
+        default=False,
+        help="Experimental: mask the edit-position token to valid AST boundaries at decode time. "
+        "Off by default -- it raises edit VALIDITY (23%%->90%%) but barely moves functional repair "
+        "(realistic best-of-16 26.7%% vs 27.3%% unconstrained; hard 8.0%% vs 5.3%%), because valid != "
+        "correct: the model's position CHOICE, not validity, is the bottleneck. Research toggle.",
     )
     parser.add_argument("--max-tasks", type=int, default=50, help="Max MBPP tasks to evaluate (0=all)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")

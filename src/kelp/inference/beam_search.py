@@ -189,7 +189,7 @@ def generate_edit(
     temperature: float = 1.0,
     max_replacement_len: int = 64,
     prompt: str | None = None,
-    constrain_position: bool = True,
+    constrain_position: bool = False,
 ) -> tuple[Mutation | None, float]:
     """Generate a single edit from the model via autoregressive decoding.
 
@@ -311,7 +311,7 @@ def beam_search(
     max_depth: int = 30,
     temperature: float = 1.0,
     prompt: str | None = None,
-    constrain_position: bool = True,
+    constrain_position: bool = False,
 ) -> list[BeamCandidate]:
     """Run beam search to refine programs through iterative edits.
 
@@ -401,7 +401,7 @@ def best_of_n(
     max_depth: int = 30,
     temperature: float = 1.0,
     prompt: str | None = None,
-    constrain_position: bool = True,
+    constrain_position: bool = False,
 ) -> list[BeamCandidate]:
     """Best-of-N sampling: run N independent rollouts, return all results.
 
