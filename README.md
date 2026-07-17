@@ -239,6 +239,47 @@ The prompt (typically a docstring) tells the model what the function should do, 
 - Checkpoints synced to `s3://oa-fomo-outputs/kelp/`
 - W&B logging (project: `kelp`, run: `kelp-v7-prompt-conditioning`)
 
+### v8: TPU-scale prompt conditioning on Marin/Iris (`vet-cond-v1`)
+
+The v7 direction, finally run at scale on TPU. First end-to-end experiment on
+Marin/Iris: a ~115M model (`tpu_vet`, hidden 768 / 12 layers) trained
+data-parallel on a v6e-4 slice with **streaming synthesis** (each example freshly
+generated from the corpus + subtree bank — no fixed dataset), **prompt
+conditioning** (`p_prompt=0.5`), and a linear corruption curriculum.
+
+**Training setup:**
+- Model: `tpu_vet` (~115M params), batch 64, 30K steps, seq 1024
+- Data: 19,845 docstring-bearing Python functions streamed from Marin's Stack
+  Edu GCS mirror (99.7% docstring coverage), amplified by streaming synthesis
+- Hardware: TPU v6e-4 via Iris; full-state GCS checkpoints every 2K steps
+- Training: loss 7.45 → **0.19**, edit accuracy 0 → **94%**, no overfitting
+  (loss still falling at 30K — streaming keeps every example fresh)
+
+**Evaluation (MBPP, held out; step-30000, 50 tasks, best-of-16):**
+
+| Metric | Value |
+|--------|-------|
+| Syntactic validity | 100% |
+| Exact match | 0% |
+| Avg test pass rate | 2.0% |
+| Best-of-16 test pass rate | 5.3% |
+| Tasks with ≥1 passing repair | 6 / 50 |
+
+**What we learned:**
+- **The pipeline works end-to-end at TPU scale**: GCS-sourced data → streaming
+  synthesis → data-parallel training → GCS checkpoints → resumable eval on the
+  cluster, all validated on real hardware.
+- **But held-out repair is still weak (~2% avg MBPP), roughly v5 level.** Low
+  training loss (0.19) and high training edit-accuracy (94%) did *not* translate
+  into functional repair on MBPP — the same train-accuracy-vs-repair gap seen in
+  v3 (97.9% train → 4% test). Capacity (~115M) and/or the data/conditioning
+  recipe are not yet sufficient to crack held-out functional correctness.
+- Caveats: 50-task subset (noisy); no conditioning-OFF ablation yet to isolate
+  the effect of prompt conditioning; MBPP is out-of-distribution relative to
+  Stack Edu; eval corruption difficulty (3 steps) is a knob.
+- Next: the conditioning-on/off ablation, a larger eval, and more capacity
+  (bf16 + FSDP to afford a bigger model) before committing more budget.
+
 ## Project Structure
 
 The package is layered so the pipeline reads top to bottom — representation →
