@@ -30,9 +30,12 @@ Requires: pip install egglog
 
 import ast
 import logging
+import random
 
 from egglog import EGraph, Expr, StringLike, birewrite, rewrite, vars_
 
+from kelp.tree.ast_positions import node_source_span
+from kelp.tree.mutation import Mutation
 from kelp.tree.subtree_bank import (
     EXPRESSION_TYPES,
     SubtreeBank,
@@ -448,6 +451,107 @@ def _split_args(s: str) -> tuple[str | None, str | None]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+def _operator_multiset(expr_source: str) -> tuple[str, ...] | None:
+    """Sorted multiset of operator node types in an expression, or None if it
+    doesn't parse. Used to tell a semantic near-miss (operator changed) from a
+    pure reordering (commutativity), which leaves the operator multiset intact.
+    """
+    try:
+        tree = ast.parse(expr_source, mode="eval")
+    except SyntaxError:
+        return None
+    ops: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.BinOp, ast.UnaryOp)):
+            ops.append(type(node.op).__name__)
+        elif isinstance(node, ast.BoolOp):
+            ops.append(type(node.op).__name__)
+        elif isinstance(node, ast.Compare):
+            ops.extend(type(o).__name__ for o in node.ops)
+    return tuple(sorted(ops))
+
+
+def near_miss_variants(expr_source: str, max_variants: int = 8) -> list[str]:
+    """E-graph variants of an expression that CHANGE an operator (semantic bugs).
+
+    Filters ``generate_expression_variants`` down to the near-misses -- variants
+    whose operator multiset differs from the original (e.g. ``==`` -> ``!=``,
+    ``+`` -> ``-``, ``and`` -> ``or``) -- dropping pure reorderings that stay
+    semantically equivalent. These are realistic, in-context single-operator
+    bugs (same variables, same structure), unlike swapping in an unrelated
+    subtree from the bank.
+    """
+    base_ops = _operator_multiset(expr_source)
+    if base_ops is None:
+        return []
+    out = []
+    for v in generate_expression_variants(expr_source, max_variants=max_variants):
+        v_ops = _operator_multiset(v)
+        if v_ops is not None and v_ops != base_ops:
+            out.append(v)
+    return out
+
+
+def near_miss_corrupt_program(
+    source: str,
+    num_steps: int,
+    rng: random.Random,
+    max_variants: int = 8,
+) -> tuple[str, list[Mutation]]:
+    """Corrupt a program with realistic in-context near-miss bugs.
+
+    Drop-in alternative to ``mutation.corrupt_program``: instead of replacing a
+    subtree with an unrelated one from the bank, it applies an e-graph near-miss
+    rewrite (operator flip) to one of the program's own arithmetic / comparison /
+    boolean expressions. The result is a plausible single-operator bug over the
+    program's own variables. Re-parses after each step so offsets stay valid;
+    applies fewer than ``num_steps`` if it runs out of eligible expressions.
+    """
+    current = source
+    mutations: list[Mutation] = []
+    _EXPR = (ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare)
+    for _ in range(num_steps):
+        try:
+            tree = ast.parse(current)
+        except SyntaxError:
+            break
+        # Candidate expression nodes with a resolvable source span.
+        cands = []
+        for node in ast.walk(tree):
+            if isinstance(node, _EXPR):
+                span = node_source_span(current, node)
+                if span is not None:
+                    cands.append((node, span))
+        rng.shuffle(cands)
+        applied = False
+        for _node, (start, end) in cands:
+            original = current[start:end]
+            variants = near_miss_variants(original, max_variants=max_variants)
+            if not variants:
+                continue
+            replacement = rng.choice(variants)
+            candidate = current[:start] + replacement + current[end:]
+            try:
+                ast.parse(candidate)
+            except SyntaxError:
+                continue
+            mutations.append(
+                Mutation(
+                    start=start,
+                    end=end,
+                    replacement=replacement,
+                    node_type=type(_node).__name__,
+                    original=original,
+                )
+            )
+            current = candidate
+            applied = True
+            break
+        if not applied:
+            break
+    return current, mutations
 
 
 def generate_expression_variants(

@@ -176,3 +176,30 @@ def test_augment_bank_no_duplicates(bank):
     for node_type, entries in augmented.entries.items():
         sources = [e.source for e in entries]
         assert len(sources) == len(set(sources)), f"Duplicates in {node_type}"
+
+
+def test_near_miss_variants_change_an_operator():
+    """near_miss_variants keeps only operator-changing (buggy) rewrites, not
+    semantics-preserving reorderings."""
+    from kelp.tree.egraph_augmentation import near_miss_variants
+
+    vs = near_miss_variants("(num % i) == 0")
+    assert "num % i != 0" in vs  # == -> != is a near-miss
+    assert "num % i == 0" not in vs  # pure reformat/equivalent is excluded
+
+
+def test_near_miss_corrupt_program_makes_in_context_bug():
+    """near_miss_corrupt_program flips an operator in the program's own
+    expression, staying valid Python and using the same variables."""
+    import ast
+    import random
+
+    from kelp.tree.egraph_augmentation import near_miss_corrupt_program
+
+    src = "def is_even(x):\n    return x % 2 == 0\n"
+    corrupted, muts = near_miss_corrupt_program(src, num_steps=1, rng=random.Random(1))
+    assert corrupted != src
+    assert len(muts) == 1
+    ast.parse(corrupted)  # still parses
+    assert "!=" in corrupted  # the near-miss bug
+    assert "x % 2" in corrupted  # same variables/structure preserved
