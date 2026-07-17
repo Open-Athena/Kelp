@@ -289,6 +289,35 @@ def _log_eval_to_wandb(args: argparse.Namespace, ckpt_dir: epath.Path, metrics: 
     logger.info(f"Logged eval metrics to W&B: {run.url}")
 
 
+def _tasks_dir(output_path: str) -> epath.Path:
+    """Per-task result directory next to the summary JSON (durable eval progress)."""
+    out = epath.Path(output_path)
+    return out.parent / f"{out.stem}-tasks"
+
+
+def _load_completed(tasks_dir: epath.Path) -> dict[int, dict]:
+    """Load already-computed per-task results (keyed by task_id) so a preempted
+    eval resumes instead of restarting from task 0."""
+    if not tasks_dir.exists():
+        return {}
+    completed: dict[int, dict] = {}
+    for f in tasks_dir.iterdir():
+        if not f.name.endswith(".json"):
+            continue
+        try:
+            r = json.loads(f.read_text())
+            completed[int(r["task_id"])] = r
+        except (ValueError, KeyError):
+            continue  # skip a partially-written/corrupt shard; it will be recomputed
+    return completed
+
+
+def _write_task_result(tasks_dir: epath.Path, result: dict) -> None:
+    """Durably persist one task's result so a preemption doesn't lose it."""
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f"task-{result['task_id']}.json").write_text(json.dumps(result))
+
+
 def main():
     configure_logging()  # force stdout handler so INFO logs survive JAX/absl's root handler (visible in iris logs)
     args = parse_args()
@@ -331,12 +360,24 @@ def main():
     logger.info(f"Inference: best-of-{args.n_best_of}, max_depth={args.max_depth}")
     logger.info("")
 
-    all_results = []
+    # Durable per-task results so a preemption resumes instead of restarting.
+    output_path = args.output or str(ckpt_dir / "mbpp_eval_results.json")
+    tasks_dir = _tasks_dir(output_path)
+    completed = _load_completed(tasks_dir)
+    if completed:
+        logger.info(f"Resuming: {len(completed)} of {len(eval_tasks)} tasks already complete in {tasks_dir}")
+
     start_time = time.time()
 
     for i, task in enumerate(eval_tasks):
-        key, task_key = jax.random.split(key)
-        logger.info(f"[{i + 1}/{len(eval_tasks)}] task_id={task['task_id']}: {task['text'][:60]}")
+        tid = int(task["task_id"])
+        if tid in completed:
+            continue
+        # Fold the task_id into the base key so each task's randomness is
+        # independent of iteration order -- results are identical whether the
+        # run is fresh or resumed after a preemption.
+        task_key = jax.random.fold_in(key, tid)
+        logger.info(f"[{i + 1}/{len(eval_tasks)}] task_id={tid}: {task['text'][:60]}")
 
         result = evaluate_mbpp_task(
             task=task,
@@ -350,7 +391,8 @@ def main():
             n_best_of=args.n_best_of,
             max_depth=args.max_depth,
         )
-        all_results.append(result)
+        _write_task_result(tasks_dir, result)
+        completed[tid] = result
 
         logger.info(
             f"  valid={result['valid_rate']:.1%} exact={result['exact_match_rate']:.1%} "
@@ -358,6 +400,9 @@ def main():
         )
 
     elapsed = time.time() - start_time
+
+    # Aggregate over all completed tasks (freshly computed + resumed), in task order.
+    all_results = [completed[int(t["task_id"])] for t in eval_tasks if int(t["task_id"]) in completed]
 
     # Aggregate metrics.
     tasks_with_trials = [r for r in all_results if r["num_trials"] > 0]
@@ -402,8 +447,7 @@ def main():
             },
         )
 
-    # Save results.
-    output_path = args.output or str(ckpt_dir / "mbpp_eval_results.json")
+    # Save the aggregated summary (output_path computed above for tasks_dir).
     results_data = {
         "checkpoint": str(ckpt_dir),
         "config": {

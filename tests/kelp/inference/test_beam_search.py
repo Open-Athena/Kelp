@@ -350,3 +350,15 @@ def test_best_of_n_respects_n(params, model_cfg, tokenizer):
         max_depth=2,
     )
     assert len(results) <= n
+
+
+def test_bucketed_pad_len_picks_smallest_fitting_bucket():
+    """AR decoding pads to the smallest bucket >= needed so short programs run
+    cheaper forwards; falls back to max_len when nothing fits."""
+    from kelp.inference.beam_search import _bucketed_pad_len
+
+    assert _bucketed_pad_len(100, 1024) == 128
+    assert _bucketed_pad_len(300, 1024) == 512
+    assert _bucketed_pad_len(513, 1024) == 1024
+    assert _bucketed_pad_len(2000, 1024) == 1024  # nothing fits -> max_len
+    assert _bucketed_pad_len(100, 64) == 64  # max_len below every bucket -> max_len

@@ -54,6 +54,19 @@ logger = logging.getLogger(__name__)
 # per-step decoding from eager op-by-op dispatch into a cached compiled call.
 _forward_jit = jax.jit(forward, static_argnums=(2,))
 
+# Fixed pad lengths for AR decoding. The forward is compiled once per distinct
+# length, so a small ladder keeps compilation cost bounded while letting short
+# programs skip the full-max_seq_len forward.
+_PAD_BUCKETS = (128, 256, 512, 1024)
+
+
+def _bucketed_pad_len(needed: int, max_len: int) -> int:
+    """Smallest bucket >= needed (capped at max_len); max_len if none fits."""
+    for b in _PAD_BUCKETS:
+        if needed <= b <= max_len:
+            return b
+    return max_len
+
 
 @dataclass(frozen=True)
 class BeamCandidate:
@@ -104,17 +117,24 @@ def _ar_generate_tokens(
     current_ids = context_token_ids + [tokenizer.sos_token_id]
     generated: list[int] = []
     total_log_prob = 0.0
-    max_len = cfg.max_seq_len
+
+    # Pad to a fixed bucket length for the whole generation, not always the
+    # model's max_seq_len. forward derives seq_len from the input, so a shorter
+    # padded length yields identical logits at the real positions; short
+    # programs then run much cheaper forwards. One compiled shape per bucket
+    # (a handful total), reused across steps and tasks. needed is the longest
+    # the sequence can reach: context + SOS (already in current_ids) + the
+    # tokens still to be generated.
+    pad_len = _bucketed_pad_len(len(current_ids) + max_new_tokens, cfg.max_seq_len)
 
     for step in range(max_new_tokens):
         key, sample_key = jax.random.split(key)
 
-        # Pad to a fixed length (max_seq_len) so the compiled forward sees one
-        # input shape and is reused every step. Padding is masked out in
-        # attention, so logits at the real positions are unchanged — read the
-        # true last token at seq_len - 1 rather than -1. (No KV cache yet.)
+        # Padding is masked out in attention, so logits at the real positions
+        # are unchanged — read the true last token at seq_len - 1 rather than
+        # -1. (No KV cache yet.)
         seq_len = len(current_ids)
-        padded = current_ids + [cfg.pad_token_id] * (max_len - seq_len)
+        padded = current_ids + [cfg.pad_token_id] * (pad_len - seq_len)
         input_ids = jnp.array([padded], dtype=jnp.int32)
         logits = _forward_jit(params, input_ids, cfg)
 
