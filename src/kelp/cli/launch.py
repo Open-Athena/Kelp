@@ -103,12 +103,20 @@ def build_job_request(
     # Fall back to the preset's replica count (fray uses request.replicas or 1
     # at submit, so a None here would silently under-provision a multi-host
     # preset whose resource requests replicas>1).
+    #
+    # Preemptible slices get reclaimed mid-run; without a preemption-retry budget
+    # (fray default is 0) Iris does not restart the task, so a long job just
+    # stops. Both entrypoints resume on restart -- training from the latest GCS
+    # checkpoint, eval from its per-task shards -- so allow generous preemption
+    # retries and a couple of failure retries for transient errors.
     return JobRequest(
         name=name,
         entrypoint=entrypoint,
         resources=resources,
         environment=environment,
         replicas=replicas if replicas is not None else resources.replicas,
+        max_retries_preemption=20,
+        max_retries_failure=2,
     )
 
 

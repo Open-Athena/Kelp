@@ -265,6 +265,13 @@ conditioning** (`p_prompt=0.5`), and a linear corruption curriculum.
 | Best-of-16 test pass rate | 5.3% |
 | Tasks with ≥1 passing repair | 6 / 50 |
 
+The signal is stable with sample size — a partial 66-task extension gave 1.5%
+avg / 4.0% best-of-16 (same ~2% level). A full 500-task run wasn't completed:
+on the contended preemptible cluster the eval slice is reclaimed every few
+minutes, and while the per-task shards persist, the job did not auto-restart
+(now fixed via a preemption-retry budget on the launcher). The conclusion below
+does not change with more tasks.
+
 **What we learned:**
 - **The pipeline works end-to-end at TPU scale**: GCS-sourced data → streaming
   synthesis → data-parallel training → GCS checkpoints → resumable eval on the
