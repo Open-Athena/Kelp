@@ -235,7 +235,58 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tasks", type=int, default=50, help="Max MBPP tasks to evaluate (0=all)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--output", type=str, default=None, help="Output JSON file for results")
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default=None,
+        help="W&B project to log eval metrics to (empty/unset = no W&B logging).",
+    )
+    parser.add_argument("--wandb-entity", type=str, default="open-athena", help="W&B entity (team/user).")
+    parser.add_argument(
+        "--wandb-run-id",
+        type=str,
+        default=None,
+        help="Resume/append to this W&B run id (e.g. the training run), so eval points overlay the loss "
+        "curve. All checkpoints logged to the same run form the repair-vs-step curve.",
+    )
+    parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name (default: eval-<checkpoint>).")
     return parser.parse_args()
+
+
+def _checkpoint_step(ckpt_dir: epath.Path) -> int | None:
+    """Parse the training step from a ``step-XXXXXX`` checkpoint dir name."""
+    name = ckpt_dir.name
+    suffix = name[len("step-") :] if name.startswith("step-") else ""
+    return int(suffix) if suffix.isdigit() else None
+
+
+def _log_eval_to_wandb(args: argparse.Namespace, ckpt_dir: epath.Path, metrics: dict) -> None:
+    """Log aggregate eval metrics to W&B, keyed by checkpoint_step so repeated
+    evals (per checkpoint) draw a repair-vs-step curve independent of log order."""
+    try:
+        import wandb
+    except ImportError:
+        logger.warning("wandb not installed; skipping W&B eval logging")
+        return
+
+    step = _checkpoint_step(ckpt_dir)
+    run = wandb.init(
+        entity=args.wandb_entity or None,
+        project=args.wandb_project,
+        name=args.wandb_run_name or f"eval-{ckpt_dir.name}",
+        id=args.wandb_run_id or None,
+        resume="allow" if args.wandb_run_id else None,
+    )
+    # checkpoint_step is the x-axis for eval/* so out-of-order checkpoint evals
+    # still land at the right place on the curve.
+    wandb.define_metric("checkpoint_step")
+    wandb.define_metric("eval/*", step_metric="checkpoint_step")
+    payload = {f"eval/{k}": v for k, v in metrics.items()}
+    if step is not None:
+        payload["checkpoint_step"] = step
+    run.log(payload)
+    run.finish()
+    logger.info(f"Logged eval metrics to W&B: {run.url}")
 
 
 def main():
@@ -337,6 +388,19 @@ def main():
     logger.info(f"{'Avg test pass rate':<30} {avg_test_pass:>10.1%}")
     logger.info(f"{'Best test pass rate':<30} {avg_best_pass:>10.1%}")
     logger.info("=" * 70)
+
+    if args.wandb_project:
+        _log_eval_to_wandb(
+            args,
+            ckpt_dir,
+            {
+                "mbpp_avg_pass_rate": avg_test_pass,
+                "mbpp_best_pass_rate": avg_best_pass,
+                "syntactic_validity": avg_valid,
+                "exact_match": avg_exact,
+                "tasks_evaluated": len(tasks_with_trials),
+            },
+        )
 
     # Save results.
     output_path = args.output or str(ckpt_dir / "mbpp_eval_results.json")
