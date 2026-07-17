@@ -44,6 +44,7 @@ import time
 import jax
 from etils import epath
 
+from kelp.cli._logging import configure_logging
 from kelp.corpus import is_valid_python, load_corpus
 from kelp.inference.beam_search import best_of_n
 from kelp.model.checkpointing import find_best_checkpoint, load_checkpoint
@@ -53,11 +54,6 @@ from kelp.tree.mutation import corrupt_program
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -243,6 +239,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main():
+    configure_logging()  # force stdout handler so INFO logs survive JAX/absl's root handler (visible in iris logs)
     args = parse_args()
     checkpoint_base = epath.Path(args.checkpoint_dir)
 
