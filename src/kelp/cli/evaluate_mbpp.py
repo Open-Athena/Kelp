@@ -40,10 +40,12 @@ import logging
 import random
 import sys
 import time
-from pathlib import Path
 
 import jax
+from etils import epath
 
+from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
+from kelp.cli._logging import configure_logging
 from kelp.corpus import is_valid_python, load_corpus
 from kelp.inference.beam_search import best_of_n
 from kelp.model.checkpointing import find_best_checkpoint, load_checkpoint
@@ -53,11 +55,6 @@ from kelp.tree.mutation import corrupt_program
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -239,12 +236,82 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tasks", type=int, default=50, help="Max MBPP tasks to evaluate (0=all)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--output", type=str, default=None, help="Output JSON file for results")
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default=None,
+        help="W&B project to log eval metrics to (empty/unset = no W&B logging).",
+    )
+    parser.add_argument("--wandb-entity", type=str, default="open-athena", help="W&B entity (team/user).")
+    parser.add_argument(
+        "--wandb-run-id",
+        type=str,
+        default=None,
+        help="Resume/append to this W&B run id (e.g. the training run), so eval points overlay the loss "
+        "curve. All checkpoints logged to the same run form the repair-vs-step curve.",
+    )
+    parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name (default: eval-<checkpoint>).")
     return parser.parse_args()
 
 
+def _checkpoint_step(ckpt_dir: epath.Path) -> int | None:
+    """Parse the training step from a ``step-XXXXXX`` checkpoint dir name."""
+    name = ckpt_dir.name
+    suffix = name[len("step-") :] if name.startswith("step-") else ""
+    return int(suffix) if suffix.isdigit() else None
+
+
+def _log_eval_to_wandb(args: argparse.Namespace, ckpt_dir: epath.Path, metrics: dict) -> None:
+    """Log aggregate eval metrics to W&B, keyed by checkpoint_step so repeated
+    evals (per checkpoint) draw a repair-vs-step curve independent of log order."""
+    try:
+        import wandb
+    except ImportError:
+        logger.warning("wandb not installed; skipping W&B eval logging")
+        return
+
+    step = _checkpoint_step(ckpt_dir)
+    run = wandb.init(
+        entity=args.wandb_entity or None,
+        project=args.wandb_project,
+        name=args.wandb_run_name or f"eval-{ckpt_dir.name}",
+        id=args.wandb_run_id or None,
+        resume="allow" if args.wandb_run_id else None,
+    )
+    # checkpoint_step is the x-axis for eval/* so out-of-order checkpoint evals
+    # still land at the right place on the curve.
+    wandb.define_metric("checkpoint_step")
+    wandb.define_metric("eval/*", step_metric="checkpoint_step")
+    payload = {f"eval/{k}": v for k, v in metrics.items()}
+    if step is not None:
+        payload["checkpoint_step"] = step
+    run.log(payload)
+    run.finish()
+    logger.info(f"Logged eval metrics to W&B: {run.url}")
+
+
+def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
+    """Fingerprint of the config that determines a task's result, so re-runs
+    with different parameters get a fresh shard dir instead of stale results.
+    ``max_tasks`` is excluded: it changes which tasks run, not any task's result,
+    so a wider run can reuse a narrower one's shards."""
+    return eval_fingerprint(
+        {
+            "checkpoint": str(ckpt_dir),
+            "seed": args.seed,
+            "num_corruptions": args.num_corruptions,
+            "corruption_steps": args.corruption_steps,
+            "n_best_of": args.n_best_of,
+            "max_depth": args.max_depth,
+            "corpus_file": args.corpus_file,
+        }
+    )
+
+
 def main():
+    configure_logging()  # force stdout handler so INFO logs survive JAX/absl's root handler (visible in iris logs)
     args = parse_args()
-    checkpoint_base = Path(args.checkpoint_dir)
+    checkpoint_base = epath.Path(args.checkpoint_dir)
 
     if args.checkpoint:
         ckpt_dir = checkpoint_base / args.checkpoint
@@ -283,12 +350,27 @@ def main():
     logger.info(f"Inference: best-of-{args.n_best_of}, max_depth={args.max_depth}")
     logger.info("")
 
-    all_results = []
+    # Durable per-task results so a preemption resumes instead of restarting.
+    # The shard dir is fingerprinted by the eval config so a re-run with
+    # different parameters doesn't reuse stale results.
+    output_path = args.output or str(ckpt_dir / "mbpp_eval_results.json")
+    tasks_dir = shard_dir(output_path, _eval_fingerprint(args, ckpt_dir))
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    completed = load_completed(tasks_dir, "task_id")
+    if completed:
+        logger.info(f"Resuming: {len(completed)} of {len(eval_tasks)} tasks already complete in {tasks_dir}")
+
     start_time = time.time()
 
     for i, task in enumerate(eval_tasks):
-        key, task_key = jax.random.split(key)
-        logger.info(f"[{i + 1}/{len(eval_tasks)}] task_id={task['task_id']}: {task['text'][:60]}")
+        tid = int(task["task_id"])
+        if tid in completed:
+            continue
+        # Fold the task_id into the base key so each task's randomness is
+        # independent of iteration order -- results are identical whether the
+        # run is fresh or resumed after a preemption.
+        task_key = jax.random.fold_in(key, tid)
+        logger.info(f"[{i + 1}/{len(eval_tasks)}] task_id={tid}: {task['text'][:60]}")
 
         result = evaluate_mbpp_task(
             task=task,
@@ -302,7 +384,8 @@ def main():
             n_best_of=args.n_best_of,
             max_depth=args.max_depth,
         )
-        all_results.append(result)
+        write_result(tasks_dir, result, "task_id")
+        completed[tid] = result
 
         logger.info(
             f"  valid={result['valid_rate']:.1%} exact={result['exact_match_rate']:.1%} "
@@ -310,6 +393,9 @@ def main():
         )
 
     elapsed = time.time() - start_time
+
+    # Aggregate over all completed tasks (freshly computed + resumed), in task order.
+    all_results = [completed[int(t["task_id"])] for t in eval_tasks if int(t["task_id"]) in completed]
 
     # Aggregate metrics.
     tasks_with_trials = [r for r in all_results if r["num_trials"] > 0]
@@ -341,8 +427,20 @@ def main():
     logger.info(f"{'Best test pass rate':<30} {avg_best_pass:>10.1%}")
     logger.info("=" * 70)
 
-    # Save results.
-    output_path = args.output or str(ckpt_dir / "mbpp_eval_results.json")
+    if args.wandb_project:
+        _log_eval_to_wandb(
+            args,
+            ckpt_dir,
+            {
+                "mbpp_avg_pass_rate": avg_test_pass,
+                "mbpp_best_pass_rate": avg_best_pass,
+                "syntactic_validity": avg_valid,
+                "exact_match": avg_exact,
+                "tasks_evaluated": len(tasks_with_trials),
+            },
+        )
+
+    # Save the aggregated summary (output_path computed above for tasks_dir).
     results_data = {
         "checkpoint": str(ckpt_dir),
         "config": {
@@ -365,8 +463,7 @@ def main():
         "elapsed_seconds": elapsed,
     }
 
-    with open(output_path, "w") as f:
-        json.dump(results_data, f, indent=2)
+    epath.Path(output_path).write_text(json.dumps(results_data, indent=2))
     logger.info(f"Results saved to {output_path}")
 
     return 0

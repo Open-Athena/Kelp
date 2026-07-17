@@ -19,6 +19,8 @@
 
 import ast
 
+from etils import epath
+
 CORPUS_SEPARATOR = "# ---"
 """Sentinel line separating programs in corpus files.
 
@@ -46,16 +48,21 @@ def _finalize_program(lines: list[str]) -> str | None:
 
 
 def load_corpus(path: str) -> list[str]:
-    """Load a corpus from a file.
+    """Load a corpus from a local or ``gs://`` file.
 
     Programs are separated by lines containing only '# ---'.
     This allows programs to contain internal blank lines. Leading/trailing
-    blank lines are stripped from every program identically.
+    blank lines are stripped from every program identically. The path is opened
+    via ``etils.epath`` so ``gs://`` corpora work without a local copy, and
+    lines are streamed (not slurped) so large corpora don't sit in memory. We
+    iterate the file object rather than ``str.splitlines()`` because the latter
+    also splits on form-feed / NEL / Unicode line separators that are valid
+    bytes inside Python source and would corrupt those programs.
     """
     programs: list[str] = []
     current_lines: list[str] = []
 
-    with open(path) as f:
+    with epath.Path(path).open("r") as f:
         for line in f:
             if line.rstrip() == CORPUS_SEPARATOR:
                 program = _finalize_program(current_lines)

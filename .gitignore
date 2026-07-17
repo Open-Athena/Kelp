@@ -11,10 +11,11 @@ __pycache__/
 # IDE
 .idea/
 
-# Kelp corpora (regenerate with kelp.prepare_corpus)
+# Kelp corpora (regenerate with kelp.prepare_corpus; large + GCS-backed)
 corpus.txt
 corpus_v7.txt
 corpus*.txt
+data/*.txt
 
 # Training artifacts
 checkpoints/

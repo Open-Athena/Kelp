@@ -239,6 +239,83 @@ The prompt (typically a docstring) tells the model what the function should do, 
 - Checkpoints synced to `s3://oa-fomo-outputs/kelp/`
 - W&B logging (project: `kelp`, run: `kelp-v7-prompt-conditioning`)
 
+**What happened (for posterity):** v7 was never carried to a reported result. The
+prompt-conditioning pipeline (tokenizer, training, inference, eval) all landed and
+the tests passed, but the planned 10M-param Lambda-GPU run was not completed and
+evaluated before the effort pivoted to building TPU training on Marin/Iris. v7 is
+best read as the *design* — prompt/intent conditioning as the fix for v6's
+underdetermined-repair problem — that **v8 actually executed at scale**. Its one
+contribution that did not survive is scale-of-model: v8 deliberately stayed small
+(~115M) to keep the vet cheap. The conditioning idea itself remains unproven in
+isolation: neither v7 nor v8 ran the conditioning-OFF ablation that would show
+whether the prompt is what helps (see v8 Future work).
+
+### v8: TPU-scale prompt conditioning on Marin/Iris (`vet-cond-v1`)
+
+The v7 direction, finally run at scale on TPU. First end-to-end experiment on
+Marin/Iris: a ~115M model (`tpu_vet`, hidden 768 / 12 layers) trained
+data-parallel on a v6e-4 slice with **streaming synthesis** (each example freshly
+generated from the corpus + subtree bank — no fixed dataset), **prompt
+conditioning** (`p_prompt=0.5`), and a linear corruption curriculum.
+
+**Training setup:**
+- Model: `tpu_vet` (~115M params), batch 64, 30K steps, seq 1024
+- Data: 19,845 docstring-bearing Python functions streamed from Marin's Stack
+  Edu GCS mirror (99.7% docstring coverage), amplified by streaming synthesis
+- Hardware: TPU v6e-4 via Iris; full-state GCS checkpoints every 2K steps
+- Training: loss 7.45 → **0.19**, edit accuracy 0 → **94%**, no overfitting
+  (loss still falling at 30K — streaming keeps every example fresh)
+
+**Evaluation (MBPP, held out; step-30000, 50 tasks, best-of-16):**
+
+| Metric | Value |
+|--------|-------|
+| Syntactic validity | 100% |
+| Exact match | 0% |
+| Avg test pass rate | 2.0% |
+| Best-of-16 test pass rate | 5.3% |
+| Tasks with ≥1 passing repair | 6 / 50 |
+
+The signal is stable with sample size — a partial 66-task extension gave 1.5%
+avg / 4.0% best-of-16 (same ~2% level). A full 500-task run wasn't completed:
+on the contended preemptible cluster the eval slice is reclaimed every few
+minutes, and while the per-task shards persist, the job did not auto-restart
+(now fixed via a preemption-retry budget on the launcher). The conclusion below
+does not change with more tasks.
+
+**What we learned:**
+- **The pipeline works end-to-end at TPU scale**: GCS-sourced data → streaming
+  synthesis → data-parallel training → GCS checkpoints → resumable eval on the
+  cluster, all validated on real hardware.
+- **But held-out repair is still weak (~2% avg MBPP), roughly v5 level.** Low
+  training loss (0.19) and high training edit-accuracy (94%) did *not* translate
+  into functional repair on MBPP — the same train-accuracy-vs-repair gap seen in
+  v3 (97.9% train → 4% test). Capacity (~115M) and/or the data/conditioning
+  recipe are not yet sufficient to crack held-out functional correctness.
+- Caveats: 50-task subset (noisy); no conditioning-OFF ablation yet to isolate
+  the effect of prompt conditioning; MBPP is out-of-distribution relative to
+  Stack Edu; eval corruption difficulty (3 steps) is a knob.
+
+**Future work (in rough priority):**
+- **Conditioning-OFF ablation.** The load-bearing hypothesis (prompt conditioning
+  fixes underdetermined repair) is still untested in isolation. Run the identical
+  recipe with `--prompt-conditioning` off; if MBPP doesn't move, the prompt isn't
+  the lever and the design needs rethinking.
+- **More capacity.** ~115M may simply be too small to convert low training loss
+  into held-out repair. Land bf16 compute + FSDP (training MFU is ~3.5% of peak
+  today) to afford a ~1B model on the same budget, then re-run.
+- **Harder look at the eval itself.** 0% exact match with 100% syntactic validity
+  suggests the model produces *valid but wrong* programs; inspect failures, sweep
+  eval corruption difficulty, and consider held-out-corpus repair (in-distribution)
+  alongside MBPP (out-of-distribution) to separate "can't repair" from "wrong
+  distribution".
+- **Faster eval.** Best-of-N runs sequentially with no KV cache (~15 s/task); batch
+  the rollouts and add a KV cache (with a before/after correctness gate) so full
+  500-task evals and per-checkpoint eval curves are cheap.
+- **Data variance.** Push corpus diversity further (more Stack Edu, well-documented
+  libraries, streaming e-graph augmentation) now that sourcing from Marin GCS +
+  streaming synthesis is in place.
+
 ## Project Structure
 
 The package is layered so the pipeline reads top to bottom — representation →

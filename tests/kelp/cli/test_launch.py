@@ -25,6 +25,31 @@ def test_job_request_carries_preset_resources_and_command():
     assert be.args == ["-m", "kelp.cli.train", "--preset", "tpu_v5p_8", "--steps", "50000", "--wandb-project", "kelp"]
 
 
+def test_job_request_sets_preemption_retry_budget():
+    """Preemptible slices get reclaimed mid-run; the request must allow Iris to
+    restart the task (entrypoints resume from checkpoint/shards) rather than stop."""
+    req = build_job_request("tpu_vet", [], name="kelp-test", environ={})
+    assert req.max_retries_preemption > 0
+    assert req.max_retries_failure > 0
+
+
+def test_eval_request_runs_eval_module_without_preset_flag():
+    """An eval launch runs the eval module on the preset's slice but does NOT
+    inject --preset (the model config comes from the checkpoint)."""
+    req = build_job_request(
+        "tpu_vet",
+        ["--checkpoint-dir", "gs://b/ckpts", "--n-best-of", "16"],
+        name="kelp-eval-test",
+        module="kelp.cli.evaluate_mbpp",
+        inject_preset=False,
+        environ={},
+    )
+    assert req.resources.device.variant == "v6e-4"
+    be = req.entrypoint.binary_entrypoint
+    assert be.args == ["-m", "kelp.cli.evaluate_mbpp", "--checkpoint-dir", "gs://b/ckpts", "--n-best-of", "16"]
+    assert "--preset" not in be.args
+
+
 def test_env_passthrough_reads_named_vars_only():
     """Named env vars present in the environment are forwarded; others are not."""
     req = build_job_request(
