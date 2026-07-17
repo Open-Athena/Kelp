@@ -47,6 +47,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+from etils import epath
+
 from kelp.corpus import CORPUS_SEPARATOR, extract_docstring
 from kelp.eval_tasks import EVAL_SIGNATURES
 
@@ -373,18 +375,18 @@ def deduplicate_and_filter(programs: list[str], max_length: int) -> list[str]:
     return filtered
 
 
-def write_corpus(programs: list[str], output_path: Path) -> None:
-    """Write programs to a corpus file, separated by '# ---' sentinel lines.
+def write_corpus(programs: list[str], output_path: str | Path) -> None:
+    """Write programs to a local or ``gs://`` corpus file, '# ---'-separated.
 
     This separator allows programs to contain internal blank lines,
     unlike the previous blank-line-separated format.
     """
-    with open(output_path, "w", encoding="utf-8") as f:
-        for i, prog in enumerate(programs):
-            if i > 0:
-                f.write(CORPUS_SEPARATOR + "\n")
-            f.write(prog.rstrip("\n"))
-            f.write("\n")
+    parts: list[str] = []
+    for i, prog in enumerate(programs):
+        if i > 0:
+            parts.append(CORPUS_SEPARATOR + "\n")
+        parts.append(prog.rstrip("\n") + "\n")
+    epath.Path(output_path).write_text("".join(parts))
 
 
 def parse_args() -> argparse.Namespace:
@@ -504,8 +506,8 @@ def main():
     # Shuffle for training diversity.
     rng.shuffle(filtered)
 
-    # Write output.
-    output_path = Path(args.output)
+    # Write output (local or gs://).
+    output_path = epath.Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_corpus(filtered, output_path)
 
@@ -517,7 +519,6 @@ def main():
     logger.info(f"Total characters: {total_chars:,}")
     logger.info(f"Average length: {avg_len:.0f} chars")
     logger.info(f"With docstrings: {num_with_docstrings} ({100 * num_with_docstrings / max(len(filtered), 1):.1f}%)")
-    logger.info(f"File size: {output_path.stat().st_size:,} bytes")
 
 
 if __name__ == "__main__":

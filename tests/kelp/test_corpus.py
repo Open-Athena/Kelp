@@ -33,3 +33,14 @@ def test_load_corpus_preserves_internal_blank_lines_and_drops_empty_blocks(tmp_p
     programs = load_corpus(str(corpus_file))
 
     assert programs == ["def a():\n    x = 1\n\n    return x\n", "def b():\n    return 2\n"]
+
+
+def test_write_then_load_round_trips_via_epath(tmp_path):
+    """write_corpus -> load_corpus preserves programs; both go through epath so
+    the same code path serves local and gs:// paths."""
+    from kelp.cli.prepare_corpus import write_corpus
+
+    progs = ["def a():\n    return 1\n", "def b():\n    '''doc'''\n    return 2\n"]
+    out = tmp_path / "corpus.txt"
+    write_corpus(progs, out)
+    assert load_corpus(str(out)) == progs
