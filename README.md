@@ -239,6 +239,17 @@ The prompt (typically a docstring) tells the model what the function should do, 
 - Checkpoints synced to `s3://oa-fomo-outputs/kelp/`
 - W&B logging (project: `kelp`, run: `kelp-v7-prompt-conditioning`)
 
+**What happened (for posterity):** v7 was never carried to a reported result. The
+prompt-conditioning pipeline (tokenizer, training, inference, eval) all landed and
+the tests passed, but the planned 10M-param Lambda-GPU run was not completed and
+evaluated before the effort pivoted to building TPU training on Marin/Iris. v7 is
+best read as the *design* — prompt/intent conditioning as the fix for v6's
+underdetermined-repair problem — that **v8 actually executed at scale**. Its one
+contribution that did not survive is scale-of-model: v8 deliberately stayed small
+(~115M) to keep the vet cheap. The conditioning idea itself remains unproven in
+isolation: neither v7 nor v8 ran the conditioning-OFF ablation that would show
+whether the prompt is what helps (see v8 Future work).
+
 ### v8: TPU-scale prompt conditioning on Marin/Iris (`vet-cond-v1`)
 
 The v7 direction, finally run at scale on TPU. First end-to-end experiment on
@@ -284,8 +295,26 @@ does not change with more tasks.
 - Caveats: 50-task subset (noisy); no conditioning-OFF ablation yet to isolate
   the effect of prompt conditioning; MBPP is out-of-distribution relative to
   Stack Edu; eval corruption difficulty (3 steps) is a knob.
-- Next: the conditioning-on/off ablation, a larger eval, and more capacity
-  (bf16 + FSDP to afford a bigger model) before committing more budget.
+
+**Future work (in rough priority):**
+- **Conditioning-OFF ablation.** The load-bearing hypothesis (prompt conditioning
+  fixes underdetermined repair) is still untested in isolation. Run the identical
+  recipe with `--prompt-conditioning` off; if MBPP doesn't move, the prompt isn't
+  the lever and the design needs rethinking.
+- **More capacity.** ~115M may simply be too small to convert low training loss
+  into held-out repair. Land bf16 compute + FSDP (training MFU is ~3.5% of peak
+  today) to afford a ~1B model on the same budget, then re-run.
+- **Harder look at the eval itself.** 0% exact match with 100% syntactic validity
+  suggests the model produces *valid but wrong* programs; inspect failures, sweep
+  eval corruption difficulty, and consider held-out-corpus repair (in-distribution)
+  alongside MBPP (out-of-distribution) to separate "can't repair" from "wrong
+  distribution".
+- **Faster eval.** Best-of-N runs sequentially with no KV cache (~15 s/task); batch
+  the rollouts and add a KV cache (with a before/after correctness gate) so full
+  500-task evals and per-checkpoint eval curves are cheap.
+- **Data variance.** Push corpus diversity further (more Stack Edu, well-documented
+  libraries, streaming e-graph augmentation) now that sourcing from Marin GCS +
+  streaming synthesis is in place.
 
 ## Project Structure
 
