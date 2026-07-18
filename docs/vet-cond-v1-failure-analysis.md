@@ -170,6 +170,12 @@ candidates in `mutation._find_candidates` (kills classes 2 and most no-ops); (c)
 treat the e-graph path as optional/removable from the hot path. Then retrain
 vet-cond-v2 and re-measure on the realistic eval.
 
+**(a) done** as a reproducible launch runbook: `scripts/train_vet_cond_v2.sh`
+(dry-run by default, `--submit` to launch) bakes in `--p-near-miss 0.85` on the
+`tpu_vet` preset over the prepared `stack_edu_python_vet.txt` corpus, and warns
+if `WANDB_API_KEY` is unset before submitting. `p_near_miss` defaults to 0.0
+globally (opt-in), so only this run switches to the realistic regime.
+
 **(b) done** (`mutation._is_string_expr` filters bare string-literal statements
 from `_find_candidates`). Re-rendered the same 30-example slice: **all
 docstring-synthesis targets gone**. The dropped-example count rose 3→5 because
