@@ -128,3 +128,44 @@ with **realistic, in-context near-miss corruption** — apply e-graph *near-miss
 rewrites (e.g. `+`↔`-`, `<`↔`<=`, drop a `not`) to the program's own expressions,
 so the model learns to localize and fix plausible single-operator bugs. Retrain,
 then re-measure on the realistic eval.
+
+## Update: realistic corruption built + gut-checked on Stack Edu (2026-07-17)
+
+Implemented three in-context corruption modes and wired a `--p-near-miss` knob
+(`GenerationConfig.p_near_miss`), tried in order per step: **operator-flip**
+(`+`→`*`, `==`→`!=`, `<`→`<=`, `/`→`//` — fires inside calls/subscripts the
+e-graph can't model) → **variable-swap** (replace a name read with another
+in-scope name) → **e-graph near-miss** (algebraic rewrites), falling back to the
+old bank subtree-swap only when none applies. Added `kelp.cli.inspect_data`, a
+gut-check renderer (clean → corrupted → target edit).
+
+Rendered 30 examples from the real `stack_edu_python_vet.txt` corpus at
+`--p-near-miss 0.7`. Mode counts: **op-flip 5, var-swap 13, near-miss 0,
+bank-swap 12, dropped(no-path) 3**. The realistic modes look exactly right —
+`input()`→`print()`, `self`→`value`, `1/dividend`→`1*dividend`, `==`→`!=`. But
+the render surfaced three error classes, **all in the bank-swap path** (still 40%
+of examples at 0.7):
+
+1. **Alien out-of-scope grafts.** Bank-swap splices a subtree from another
+   program, referencing names that don't exist here: `return rows[0][0]` →
+   `return self._collection`; `return grouping[9:]` → `return
+   '{}{}'.format(str1, str2)`; `self.set(row,val)` →
+   `_visualise_on_sphere(points, colors)`. Unrepairable-by-localization — the
+   exact pathology the realistic modes were built to replace.
+2. **Docstring-synthesis targets.** Bank-swap often lands on the docstring/string
+   node, so the target edit is a long verbatim string the model must *reproduce*
+   (e.g. regenerate a 194-char docstring). That's synthesis, not repair. Worse,
+   since the prompt IS the docstring, these examples are trivially solvable by
+   copying the prompt — degenerate either way.
+3. **No-op waste.** ~13% of bank-swaps produce `corrupted == clean`
+   (`path_len=0`), so `generate_example` returns `None` and the example is
+   dropped — wasted generation.
+
+Also: **the e-graph near-miss never fired (0/30)** — op-flip and var-swap always
+preempt it on real code, so the egglog dependency buys ~0 on this corpus.
+
+**Pre-retrain actions (recommended):** (a) raise `p_near_miss` to ~0.85 so
+bank-swap is rare; (b) exclude docstring/string-`Constant` nodes from bank-swap
+candidates in `mutation._find_candidates` (kills classes 2 and most no-ops); (c)
+treat the e-graph path as optional/removable from the hot path. Then retrain
+vet-cond-v2 and re-measure on the realistic eval.
