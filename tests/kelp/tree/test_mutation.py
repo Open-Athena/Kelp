@@ -291,6 +291,24 @@ def test_operator_flip_fires_inside_calls_and_subscripts():
     assert corrupted != source
 
 
+def test_operator_flip_ignores_operator_char_inside_a_comment():
+    """The op token is located past comments, so a matching operator character in
+    an inline comment within the operand gap is never edited (which would produce
+    an AST-identical, silently-dropped 'corruption')."""
+    source = "def f(a, b):\n    return (a  # a+b\n            + b)\n"
+    mutation = flip_one_operator(source, random.Random(0))
+
+    assert mutation is not None
+    # The edit must land on the real operator, not the '+' inside the comment.
+    assert mutation.original == "+"
+    corrupted = mutation.apply(source)
+    assert "# a+b" in corrupted  # comment untouched
+    # A real operator flip changes the AST, so find_path recovers a repair.
+    from kelp.tree.tree_diff import find_path
+
+    assert len(find_path(corrupted, source)) > 0
+
+
 def test_operator_flip_returns_none_without_operator():
     """No flippable operator -> None, so the caller can fall through to another
     corruption mechanism instead of silently no-op'ing."""

@@ -299,6 +299,29 @@ _BOOLOP_FLIPS: dict[type, tuple[str, tuple[str, ...]]] = {
 }
 
 
+def _find_operator_offset(source: str, symbol: str, start: int, end: int) -> int:
+    """Find ``symbol`` in ``source[start:end]``, skipping ``#`` comments.
+
+    The gap between two operands contains only whitespace, line-continuations,
+    and comments besides the operator itself, so a plain ``str.find`` can match
+    an operator character *inside a comment* (e.g. ``a  # a+b\\n + b``) and edit
+    the comment instead of the operator. Scanning past comment spans finds the
+    real operator token. Returns the offset, or -1 if not found.
+    """
+    i = start
+    while i < end:
+        if source[i] == "#":
+            nl = source.find("\n", i, end)
+            if nl == -1:
+                return -1  # comment runs to end of the search window
+            i = nl + 1
+            continue
+        if source.startswith(symbol, i):
+            return i
+        i += 1
+    return -1
+
+
 def _operator_sites(source: str, tree: ast.AST) -> list[tuple[int, int, str, tuple[str, ...]]]:
     """Locate flippable operator tokens.
 
@@ -310,7 +333,7 @@ def _operator_sites(source: str, tree: ast.AST) -> list[tuple[int, int, str, tup
     sites: list[tuple[int, int, str, tuple[str, ...]]] = []
 
     def locate(left_end: int, right_start: int, symbol: str, alts: tuple[str, ...]) -> None:
-        idx = source.find(symbol, left_end, right_start)
+        idx = _find_operator_offset(source, symbol, left_end, right_start)
         if idx != -1:
             sites.append((idx, idx + len(symbol), symbol, alts))
 

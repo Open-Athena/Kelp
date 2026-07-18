@@ -248,14 +248,16 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Fraction of trials corrupted with realistic in-context bugs (matches training's "
-        "--p-near-miss). 0.0 = original bank-swap corruption (unmatched/generalization eval)",
+        "--p-near-miss). 0.0 = original bank-swap corruption (unmatched/generalization eval). "
+        "IGNORED when --no-bank-swap-fallback is set (the cascade is then always attempted).",
     )
     parser.add_argument(
         "--no-bank-swap-fallback",
         dest="allow_bank_swap",
         action="store_false",
         help="Skip trials where no realistic corruption applies instead of falling back to a "
-        "bank swap (matches training's --no-bank-swap-fallback). Always attempts the cascade.",
+        "bank swap (matches training's --no-bank-swap-fallback). Always attempts the realistic "
+        "cascade, so it overrides --p-near-miss (which is then ignored).",
     )
     parser.add_argument("--n-best-of", type=int, default=16, help="Number of independent rollouts")
     parser.add_argument("--max-depth", type=int, default=10, help="Maximum edit depth")
@@ -349,6 +351,14 @@ def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
 def main():
     configure_logging()  # force stdout handler so INFO logs survive JAX/absl's root handler (visible in iris logs)
     args = parse_args()
+
+    if not args.allow_bank_swap and 0.0 < args.p_near_miss < 1.0:
+        logger.warning(
+            "--p-near-miss=%.2f is ignored because --no-bank-swap-fallback is set: the realistic "
+            "cascade is always attempted. Drop --no-bank-swap-fallback to honor the fraction.",
+            args.p_near_miss,
+        )
+
     checkpoint_base = epath.Path(args.checkpoint_dir)
 
     if args.checkpoint:
@@ -488,6 +498,7 @@ def main():
             "num_corruptions": args.num_corruptions,
             "corruption_steps": args.corruption_steps,
             "p_near_miss": args.p_near_miss,
+            "allow_bank_swap": args.allow_bank_swap,
             "n_best_of": args.n_best_of,
             "max_depth": args.max_depth,
             "max_tasks": args.max_tasks,
