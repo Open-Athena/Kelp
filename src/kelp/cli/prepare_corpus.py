@@ -51,6 +51,7 @@ from etils import epath
 
 from kelp.corpus import CORPUS_SEPARATOR, extract_docstring
 from kelp.eval_tasks import EVAL_SIGNATURES
+from kelp.tree.corruption import has_corruptible_content
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,7 +60,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-EXCLUDE_DIRS = {".venv", "__pycache__", ".git", "node_modules", "checkpoints", ".eggs", "build", "dist"}
+EXCLUDE_DIRS = {
+    ".venv",
+    "__pycache__",
+    ".git",
+    "node_modules",
+    "checkpoints",
+    ".eggs",
+    "build",
+    "dist",
+    "test",
+    "tests",
+    # Nested third-party/vendored trees: a bundled site-packages (e.g. under a
+    # stdlib install) or a _vendor dir pulls in code of unknown/mixed provenance.
+    # Matched relative to source_dir, so this never blocks a library pointed at
+    # directly (its own path lives *under* an ancestor site-packages).
+    "site-packages",
+    "dist-packages",
+    "_vendor",
+    "vendored",
+}
 
 # Eval-task decontamination signatures live in kelp.eval_tasks (derived from
 # EVAL_TASKS), so they can never drift out of sync with the eval set.
@@ -102,21 +122,29 @@ def extract_functions_from_file(source: str, max_length: int, *, require_docstri
     return functions
 
 
-def extract_local_functions(source_dir: Path, max_length: int) -> list[str]:
-    """Extract Python functions from a local directory tree."""
+def extract_local_functions(source_dir: Path, max_length: int, *, require_docstring: bool = False) -> list[str]:
+    """Extract Python functions from a local directory tree.
+
+    When ``require_docstring`` is set, only functions carrying a docstring are
+    kept -- used to build a prompt-conditioning corpus from library source (where
+    the docstring is the intent signal).
+    """
     logger.info(f"Extracting functions from {source_dir}...")
     functions = []
     file_count = 0
 
     for py_file in source_dir.rglob("*.py"):
-        if any(part in EXCLUDE_DIRS for part in py_file.parts):
+        # Match EXCLUDE_DIRS against the path *relative to* source_dir, so an
+        # explicitly-requested library under .venv/site-packages is scanned
+        # (only nested build/test/venv dirs within the tree are skipped).
+        if any(part in EXCLUDE_DIRS for part in py_file.relative_to(source_dir).parts):
             continue
         file_count += 1
         try:
             source = py_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        functions.extend(extract_functions_from_file(source, max_length))
+        functions.extend(extract_functions_from_file(source, max_length, require_docstring=require_docstring))
 
     logger.info(f"  Scanned {file_count} files, extracted {len(functions)} functions")
     return functions
@@ -440,6 +468,15 @@ def parse_args() -> argparse.Namespace:
         help="Keep only functions that carry a docstring. Builds a corpus for prompt conditioning, "
         "where the docstring is the intent signal (function-level docstring coverage is otherwise low).",
     )
+    parser.add_argument(
+        "--require-corruptible",
+        action="store_true",
+        help="Keep only functions that admit a realistic in-context corruption (a flippable operator "
+        "or >=2 in-scope names). Drops trivial functions (abstract stubs, one-line wrappers) whose "
+        "only corruption is an alien bank swap. Write to a NEW output path -- never overwrite an "
+        "existing corpus. Off by default; the training-time --no-bank-swap-fallback drops these "
+        "at load time regardless, so regenerating the corpus is optional.",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed for shuffling")
     return parser.parse_args()
 
@@ -462,7 +499,7 @@ def main():
         logger.info("  Local extraction: skipped (--no-local)")
     else:
         for source_dir in source_dirs:
-            local_funcs = extract_local_functions(source_dir, args.max_length)
+            local_funcs = extract_local_functions(source_dir, args.max_length, require_docstring=args.require_docstring)
             all_programs.extend(local_funcs)
 
     # Source: Stack Edu from Marin GCS (works offline from HuggingFace).
@@ -500,6 +537,12 @@ def main():
     logger.info(f"Total raw programs: {len(all_programs)}")
     filtered = deduplicate_and_filter(all_programs, args.max_length)
     logger.info(f"After dedup/filter: {len(filtered)} programs")
+
+    # Optional: drop programs with no realistic corruption (trivial functions).
+    if args.require_corruptible:
+        before = len(filtered)
+        filtered = [p for p in filtered if has_corruptible_content(p)]
+        logger.info(f"After --require-corruptible: {len(filtered)} programs ({before - len(filtered)} dropped)")
 
     # Shuffle for training diversity.
     rng.shuffle(filtered)

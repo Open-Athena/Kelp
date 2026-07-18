@@ -58,3 +58,18 @@ def test_find_span_end_no_match():
 def test_find_span_end_invalid_python():
     end = find_span_end("def (broken", 0)
     assert end is None
+
+
+def test_valid_edit_start_offsets_matches_find_span_end():
+    """valid_edit_start_offsets returns exactly the offsets where find_span_end
+    succeeds -- the set used to build the decode-time position mask."""
+    from kelp.tree.ast_positions import valid_edit_start_offsets
+
+    src = "def f(x):\n    return x + 1\n"
+    starts = valid_edit_start_offsets(src)
+    assert starts  # non-empty for real code
+    for s in starts:
+        assert find_span_end(src, s) is not None
+    # an offset mid-token is not a node start
+    assert 3 not in starts
+    assert find_span_end(src, 3) is None

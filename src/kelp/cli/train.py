@@ -112,6 +112,22 @@ def parse_args() -> argparse.Namespace:
         help="Probability of including a docstring prompt when available (default: 0.5)",
     )
     parser.add_argument(
+        "--p-near-miss",
+        type=float,
+        default=0.0,
+        help="Probability of corrupting with an e-graph near-miss (realistic operator-flip bug) "
+        "instead of a bank subtree swap; falls back to bank swap when unavailable (default: 0.0). "
+        "IGNORED when --no-bank-swap-fallback is set (the cascade is then always attempted).",
+    )
+    parser.add_argument(
+        "--no-bank-swap-fallback",
+        dest="allow_bank_swap",
+        action="store_false",
+        help="Drop programs with no realistic corruption instead of injecting an out-of-context "
+        "bank subtree swap (realistic-or-drop training). Always attempts the realistic cascade, "
+        "so it overrides --p-near-miss (which is then ignored).",
+    )
+    parser.add_argument(
         "--data-loader",
         type=str,
         default="inline",
@@ -152,6 +168,13 @@ def main():
     """Main entry point."""
     configure_logging()  # force a stdout handler that survives absl/JAX (Iris-observable)
     args = parse_args()
+
+    if not args.allow_bank_swap and 0.0 < args.p_near_miss < 1.0:
+        logger.warning(
+            "--p-near-miss=%.2f is ignored because --no-bank-swap-fallback is set: the realistic "
+            "cascade is always attempted. Drop --no-bank-swap-fallback to honor the fraction.",
+            args.p_near_miss,
+        )
 
     # Bring up JAX distributed from Iris job metadata before any device use.
     # No-op off-cluster (laptop/CI/single host).
@@ -200,6 +223,8 @@ def main():
         corruption_curriculum=args.corruption_curriculum,
         curriculum_warmup_fraction=args.curriculum_warmup_fraction,
         p_prompt=args.p_prompt,
+        p_near_miss=args.p_near_miss,
+        allow_bank_swap=args.allow_bank_swap,
     )
 
     # Resume from the latest checkpoint in output_dir if one exists (e.g. after a

@@ -28,6 +28,8 @@ def test_fingerprint_changes_with_config():
     base = {"n_best_of": 16, "seed": 42}
     assert eval_fingerprint(base) == eval_fingerprint(dict(base))  # stable
     assert eval_fingerprint(base) != eval_fingerprint({**base, "n_best_of": 8})
+    # Matched (0.85) and unmatched (0.0) evals must land in separate shards.
+    assert eval_fingerprint({**base, "p_near_miss": 0.85}) != eval_fingerprint({**base, "p_near_miss": 0.0})
 
 
 def test_results_persist_and_reload_for_resume(tmp_path):

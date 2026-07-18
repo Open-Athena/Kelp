@@ -316,6 +316,63 @@ does not change with more tasks.
   libraries, streaming e-graph augmentation) now that sourcing from Marin GCS +
   streaming synthesis is in place.
 
+### v9: Realistic corruption + curated library corpus (`vet-cond-v2`)
+
+The v8 post-mortem pointed at the training **task**, not model capacity: v1
+trained on *alien* subtree-swap corruptions (grafting unrelated code in) and was
+scored on an unrealistically hard distribution, so low training loss never became
+functional repair. v2 keeps the same ~115M `tpu_vet` model and fixes two things —
+full diagnosis and design in the
+[failure-analysis supplement](docs/vet-cond-v1-failure-analysis.md):
+
+1. **Realistic-or-drop corruption.** Every training example is now a plausible
+   *in-context* single-token bug — an operator flip (`==`→`!=`) or a wrong-variable
+   swap over the program's own names — via `--p-near-miss 1.0
+   --no-bank-swap-fallback` (≤ 2 steps, linear curriculum). Programs with no
+   realistic corruption are dropped rather than graft-corrupted, so there are
+   **zero alien subtree grafts**.
+2. **Curated high-quality corpus.** Scraped Stack Edu (noisy docstrings, many
+   trivial functions) is replaced by **~8,100 functions from permissively-licensed
+   libraries with real docstrings** — CPython stdlib, scipy, numpy, networkx,
+   Pallets, JAX numerical, `django.utils`, boltons, toolz, sortedcontainers —
+   filtered to functions that carry a docstring and admit an in-context
+   corruption.
+
+**Training setup:**
+- Model: `tpu_vet` (~115M), batch 64, 50K steps, seq 1024, streaming synthesis +
+  prompt conditioning (`p_prompt=0.5`)
+- Hardware: TPU v6e-4 via Iris; full-state GCS checkpoints every 5K steps; loss
+  0.48 → **0.05**
+
+**Evaluation (MBPP, held out; step-50000, best-of-16, corruption steps=2):**
+
+| Metric | matched (realistic) | unmatched (bank-swap) |
+|--------|---------------------|-----------------------|
+| Syntactic validity | 100% | 100% |
+| Best-of-16 test pass | **15.2%** | **14.7%** |
+| Tasks evaluated | 33 / 50 † | 50 / 50 |
+| Tasks with ≥1 passing repair | 8 / 33 | — |
+
+Directionally up from v1's 5.3% best-of-16, but **not apples-to-apples**: v1's eval
+used 3-step corruption and v2 uses 2-step. The **matched** eval measures the
+trained (realistic) distribution; **unmatched** measures the old bank-swap
+distribution (generalization).
+† The matched eval hung on one task — a non-terminating generated candidate, since
+`run_mbpp_test` has no execution timeout (a known bug); the 33 completed tasks were
+recovered from the logs.
+
+**What we learned:**
+- **Functional repair jumped ~2% → ~15%** with 100% syntactic validity throughout.
+  The curated corpus + realistic corruption clearly help — the lever was the
+  training *task*, as the v8 post-mortem predicted.
+- **Matched ≈ unmatched (15.2% vs 14.7%).** The model learned a *general* repair
+  skill rather than overfitting to the training corruption — robust, but no
+  in-distribution advantage to exploit.
+- **The wall is now localization/correctness, not validity or corpus quality.**
+  Most tasks still repair 0% of their tests despite 100% valid edits — the same
+  "valid ≠ correct" gap, now at a much higher floor. The next frontier is
+  edit-position calibration and repair correctness, not more data.
+
 ## Project Structure
 
 The package is layered so the pipeline reads top to bottom — representation →

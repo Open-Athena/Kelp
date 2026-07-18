@@ -87,6 +87,27 @@ def iter_editable_nodes(source: str, tree: ast.AST, max_edit_stmts: int) -> Iter
         yield PositionedNode(node=node, node_type=type_name, start=start, end=end, stmt_count=stmt_count)
 
 
+def valid_edit_start_offsets(source: str) -> set[int]:
+    """Character offsets that begin an extractable node.
+
+    These are exactly the ``start_offset`` values for which ``find_span_end``
+    returns non-None -- i.e. the valid edit positions. Parses once so callers
+    can build a decode-time position mask without an O(len) sweep.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    starts: set[int] = set()
+    for node in ast.walk(tree):
+        if type(node).__name__ not in EXTRACTABLE_TYPES:
+            continue
+        span = node_source_span(source, node)
+        if span is not None:
+            starts.add(span[0])
+    return starts
+
+
 def find_span_end(source: str, start_offset: int) -> int | None:
     """Find the end offset of the smallest extractable node starting at ``start_offset``.
 
