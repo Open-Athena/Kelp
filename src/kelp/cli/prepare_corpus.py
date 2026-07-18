@@ -61,7 +61,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 EXCLUDE_DIRS = {
-    ".venv", "__pycache__", ".git", "node_modules", "checkpoints", ".eggs", "build", "dist", "test", "tests"
+    ".venv", "__pycache__", ".git", "node_modules", "checkpoints", ".eggs", "build", "dist", "test", "tests",
+    # Nested third-party/vendored trees: a bundled site-packages (e.g. under a
+    # stdlib install) or a _vendor dir pulls in code of unknown/mixed provenance.
+    # Matched relative to source_dir, so this never blocks a library pointed at
+    # directly (its own path lives *under* an ancestor site-packages).
+    "site-packages", "dist-packages", "_vendor", "vendored",
 }
 
 # Eval-task decontamination signatures live in kelp.eval_tasks (derived from

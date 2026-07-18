@@ -43,3 +43,20 @@ def test_extract_local_functions_scans_dir_under_excluded_ancestor(tmp_path):
     # the nested tests/ dir is excluded.
     assert any('"""Double x."""' in f for f in funcs)
     assert not any('"""Doc."""' in f for f in funcs)
+
+
+def test_extract_local_functions_skips_nested_site_packages(tmp_path):
+    """A nested site-packages / _vendor tree (e.g. a stdlib install bundling
+    pip's vendored libs) is excluded, so scanning one library never pulls in
+    third-party code of unknown provenance."""
+    root = tmp_path / "python3.12"
+    (root).mkdir(parents=True)
+    (root / "statistics.py").write_text(SOURCE)  # "real" stdlib module
+    vendored = root / "site-packages" / "pip" / "_vendor"
+    vendored.mkdir(parents=True)
+    (vendored / "rich.py").write_text('def rich_fn(a):\n    """Vendored."""\n    return a + 1\n')
+
+    funcs = extract_local_functions(root, max_length=512, require_docstring=True)
+
+    assert any('"""Double x."""' in f for f in funcs)  # real module kept
+    assert not any('"""Vendored."""' in f for f in funcs)  # vendored code excluded
