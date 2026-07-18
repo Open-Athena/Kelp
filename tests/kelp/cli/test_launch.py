@@ -3,8 +3,49 @@
 
 """Tests for the Iris launch entrypoint (build side; no live cluster)."""
 
-from kelp.cli.launch import build_job_request, format_dry_run
+from kelp.cli.launch import build_job_request, format_dry_run, gcs_region_from_args
 from kelp.training.presets import get_preset
+
+
+def test_gcs_region_from_args_parses_bucket_region():
+    """The region is read from the --output-dir / --checkpoint-dir bucket name;
+    None when there is no gs:// output arg or no region token."""
+    assert gcs_region_from_args(["--output-dir", "gs://marin-us-east5/kelp/ck"]) == "us-east5"
+    assert gcs_region_from_args(["--checkpoint-dir", "gs://marin-europe-west4/x"]) == "europe-west4"
+    assert gcs_region_from_args(["--output-dir=gs://marin-us-central2/y"]) == "us-central2"
+    assert gcs_region_from_args(["--steps", "50000"]) is None  # no gs:// output arg
+    assert gcs_region_from_args(["--output-dir", "gs://plain-bucket/z"]) is None  # no region token
+
+
+def test_pins_tpu_region_from_output_bucket():
+    """A TPU job checkpointing to a regioned bucket is pinned to that region, so
+    checkpoint writes stay in-region (no cross-region egress)."""
+    req = build_job_request(
+        "tpu_vet",
+        ["--output-dir", "gs://marin-us-east5/kelp/checkpoints/x", "--steps", "1"],
+        name="kelp-test",
+        environ={},
+    )
+    assert req.resources.regions == ["us-east5"]
+
+
+def test_explicit_region_overrides_inferred():
+    """An explicit --region wins over the bucket-inferred region."""
+    req = build_job_request(
+        "tpu_vet",
+        ["--output-dir", "gs://marin-us-east5/kelp/x"],
+        name="kelp-test",
+        region="us-central2",
+        environ={},
+    )
+    assert req.resources.regions == ["us-central2"]
+
+
+def test_no_region_pin_without_region_token():
+    """No region inferable and none given -> placement left unconstrained (the
+    preset's resource is untouched)."""
+    req = build_job_request("tpu_vet", ["--output-dir", "gs://plain/x"], name="kelp-test", environ={})
+    assert req.resources.regions is None
 
 
 def test_job_request_carries_preset_resources_and_command():

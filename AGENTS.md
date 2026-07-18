@@ -6,34 +6,47 @@ repository. Keep this current — add a section whenever a new footgun bites.
 ## Launching TPU jobs: avoid cross-region GCS egress
 
 **Incident (2026-07-18).** The `vet-cond-v2` training job (`kelp-tpu_vet`) tripped
-a high-egress alert. Root cause: the v6e-4 slice was scheduled in **`us-east1-d`**,
-but checkpoints were written to **`gs://marin-us-east5/...`** (region **us-east5**).
-All **11.78 GiB** of checkpoints (10 × ~1.18 GiB, one every 5000 steps) crossed
-regions `us-east1 → us-east5`, which bills as network egress. There was **no
+a high-egress alert — the egress report attributed **169 of 224 cross-region GCS
+operations (75%)** to it. Root cause: the v6e-4 slice ran **outside us-east5**
+while checkpoints were written to **`gs://marin-us-east5/...`** (region
+**us-east5**). All **11.78 GiB** of checkpoints (10 × ~1.18 GiB, one every 5000
+steps) crossed regions, which bills as network egress. There was **no
 external-download cause** — W&B logs metrics only, and the corpus streams from the
 same-region bucket.
+
+Two subtleties the alert revealed:
+- The dominant route was **`europe-west4 → us-east5`** (i.e. *inter-continental*,
+  the most expensive tier), not intra-US — the `us-east1-d` worker seen in `job
+  summary` was only the final slice.
+- The run was **preempted once**, and the retry **migrated it to a different
+  region** mid-run. So pinning must constrain *every* placement, including
+  preemption retries — which `regions=[...]` does.
 
 **Rule: the compute region MUST match the region of every GCS bucket the job
 reads or writes (checkpoints and corpus).** Cross-region GCS traffic is egress.
 
 Before launching any `kelp-launch` / `kelp-eval` job that touches GCS:
 
-1. **Pick a zone in the bucket's region.** The default checkpoint bucket
-   `gs://marin-us-east5` is in **us-east5**, and v6e is available in **`us-east5-b`**
-   (marin cluster v6e zones: `europe-west4-a, us-east1-d, us-east5-b`). Prefer
-   `us-east5-b` so checkpoint writes stay in-region.
-   - `kelp-launch` does not yet expose a zone flag — the assigned zone is
-     scheduler/capacity-driven. **Proper fix (recommended follow-up):** add a
-     zone constraint to the `JobRequest` in `src/kelp/cli/launch.py` that prefers
-     the `--output-dir` bucket's region. Until then, use step 2.
-2. **Verify the assigned region right after submit.** `uv run iris --cluster=marin
-   job summary /<user>/<job>` shows the worker name, e.g.
-   `marin-tpu-v6e-preemptible-4-us-east1-d`. If that region ≠ the `--output-dir`
-   bucket's region, you are paying egress on every checkpoint — kill and relaunch,
-   or switch `--output-dir` to a same-region bucket.
-3. **If capacity forces a different region,** point `--output-dir` at a bucket in
-   the *compute's* region and copy only the FINAL checkpoint cross-region with a
-   single `gsutil cp` — never one transfer per checkpoint interval.
+1. **Region pinning is automatic (as of the launcher fix).** `build_job_request`
+   in `src/kelp/cli/launch.py` infers the region from the `--output-dir` /
+   `--checkpoint-dir` bucket (`gs://marin-us-east5/...` → `us-east5`) and pins the
+   TPU slice to it (`ResourceConfig.regions`), so checkpoint writes stay in-region
+   on every placement *and* on preemption retries. The dry-run prints the pinned
+   `regions:` line; a `Pinned compute to region …` log confirms it on submit.
+   Override with `kelp-launch --region <r>` if you must. The default bucket
+   `gs://marin-us-east5` is us-east5, where v6e is available in `us-east5-b`
+   (marin v6e zones: `europe-west4-a, us-east1-d, us-east5-b`).
+   - Caveat: pinning to one region can leave the job *pending* if that region is
+     out of (preemptible) capacity. That's the right trade — wait for in-region
+     capacity rather than silently pay inter-continental egress. Widen with
+     `--region` only if you also move the bucket.
+2. **Still sanity-check the region after submit.** `uv run iris --cluster=marin
+   job summary /<user>/<job>` shows the worker (e.g.
+   `marin-tpu-v6e-preemptible-4-us-east5-b`). Confirm it matches the bucket's
+   region — belt and suspenders.
+3. **If you deliberately run in another region,** point `--output-dir` at a bucket
+   in the *compute's* region and copy only the FINAL checkpoint cross-region with
+   a single `gsutil cp` — never one transfer per checkpoint interval.
 
 ## Minimize checkpoint volume
 

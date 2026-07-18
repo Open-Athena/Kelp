@@ -34,8 +34,10 @@ Prerequisites on the cluster:
 """
 
 import argparse
+import dataclasses
 import logging
 import os
+import re
 from pathlib import Path
 
 from fray.types import Entrypoint, JobRequest, ResourceConfig, create_environment
@@ -46,6 +48,41 @@ from kelp.training.presets import PRESETS, get_preset
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENV_PASSTHROUGH = ("WANDB_API_KEY", "WANDB_ENTITY", "HF_TOKEN")
+
+# A GCP region token as it appears in a bucket name (us-east5, us-central2,
+# europe-west4, ...). Used to infer the compute region from the output bucket.
+_GCP_REGION_RE = re.compile(r"(?:us|europe|asia|northamerica|southamerica|australia|me|africa)-[a-z]+\d+")
+
+
+def _gcs_bucket_after(passthrough_args: list[str], flag: str) -> str | None:
+    """Bucket name from a ``<flag> gs://bucket/...`` (or ``<flag>=gs://...``) arg."""
+    for i, arg in enumerate(passthrough_args):
+        value: str | None = None
+        if arg == flag and i + 1 < len(passthrough_args):
+            value = passthrough_args[i + 1]
+        elif arg.startswith(flag + "="):
+            value = arg.split("=", 1)[1]
+        if value and value.startswith("gs://"):
+            return value[len("gs://") :].split("/", 1)[0]
+    return None
+
+
+def gcs_region_from_args(passthrough_args: list[str]) -> str | None:
+    """Best-effort region of the job's GCS output/checkpoint bucket, parsed from
+    the bucket name (e.g. ``gs://marin-us-east5/...`` -> ``us-east5``).
+
+    Used to pin compute to the bucket's region so checkpoint writes stay
+    in-region -- cross-region GCS traffic bills as egress (see AGENTS.md). Returns
+    None when there is no ``gs://`` output arg or the bucket name carries no
+    region token, leaving placement unconstrained.
+    """
+    for flag in ("--output-dir", "--checkpoint-dir"):
+        bucket = _gcs_bucket_after(passthrough_args, flag)
+        if bucket:
+            match = _GCP_REGION_RE.search(bucket)
+            if match:
+                return match.group(0)
+    return None
 
 
 def _device_summary(resources: ResourceConfig) -> str:
@@ -68,6 +105,7 @@ def build_job_request(
     image: str | None = None,
     env_names: tuple[str, ...] = DEFAULT_ENV_PASSTHROUGH,
     replicas: int | None = None,
+    region: str | None = None,
     environ: dict[str, str] | None = None,
 ) -> JobRequest:
     """Build a fray JobRequest that runs a Kelp module under a preset's resources.
@@ -83,6 +121,22 @@ def build_job_request(
     environ = environ if environ is not None else dict(os.environ)
     preset = get_preset(preset_name)
     resources = preset.resource
+
+    # Pin the compute to the region of the GCS output/checkpoint bucket so
+    # checkpoint writes stay in-region -- cross-region GCS traffic bills as egress
+    # (see AGENTS.md; vet-cond-v2 ran in us-east1 while its bucket was us-east5 and
+    # tripped a high-egress alert). Explicit ``region`` wins; otherwise it is
+    # inferred from the passthrough args. Only applies to a TPU slice that is not
+    # already region/zone-constrained (a preset that pins its own zone is honored).
+    target_region = region or gcs_region_from_args(passthrough_args)
+    if (
+        target_region
+        and getattr(resources.device, "kind", None) == "tpu"
+        and resources.regions is None
+        and resources.zone is None
+    ):
+        resources = dataclasses.replace(resources, regions=[target_region])
+        logger.info("Pinned compute to region %s (matches GCS bucket; avoids cross-region egress).", target_region)
 
     preset_flag = ["--preset", preset_name] if inject_preset else []
     command_args = ["-m", module, *preset_flag, *passthrough_args]
@@ -138,6 +192,7 @@ def format_dry_run(request: JobRequest, preset_name: str) -> str:
         f"  job name    : {request.name}",
         f"  preset      : {preset_name}",
         f"  accelerator : {_device_summary(resources)}  (cpu={resources.cpu}, ram={resources.ram})",
+        f"  regions     : {resources.regions or '(scheduler default -- may be cross-region from bucket!)'}",
         f"  replicas    : {request.replicas if request.replicas is not None else resources.replicas}",
         f"  code        : {source}",
         f"  env passthru: {', '.join(env_keys) or '(none)'}",
@@ -169,6 +224,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--replicas", type=int, default=None, help="Number of job replicas (default: preset).")
     parser.add_argument(
+        "--region",
+        type=str,
+        default=None,
+        help="Pin compute to this GCS region (default: inferred from the --output-dir bucket) so "
+        "checkpoints stay in-region and avoid cross-region egress. See AGENTS.md.",
+    )
+    parser.add_argument(
         "--cluster",
         type=str,
         default="marin",
@@ -197,7 +259,13 @@ def main(argv: list[str] | None = None) -> None:
     name = args.name or f"kelp-{args.preset}"
 
     request = build_job_request(
-        args.preset, train_args, name=name, image=args.image, env_names=env_names, replicas=args.replicas
+        args.preset,
+        train_args,
+        name=name,
+        image=args.image,
+        env_names=env_names,
+        replicas=args.replicas,
+        region=args.region,
     )
     _submit_or_dry_run(request, args.preset, submit=args.submit, cluster=args.cluster, name=name)
 
@@ -250,6 +318,13 @@ def parse_eval_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--image", type=str, default=None, help="Worker Docker image (kelp + deps + gcsfs).")
     parser.add_argument("--env", action="append", default=None, metavar="KEY", help="Env var name to pass in.")
     parser.add_argument("--replicas", type=int, default=None, help="Number of job replicas (default: preset).")
+    parser.add_argument(
+        "--region",
+        type=str,
+        default=None,
+        help="Pin compute to this GCS region (default: inferred from the --checkpoint-dir bucket) so "
+        "the job runs in-region and avoids cross-region egress. See AGENTS.md.",
+    )
     parser.add_argument("--cluster", type=str, default="marin", help="Iris cluster (default: marin).")
     parser.add_argument("--submit", action="store_true", help="Actually submit (default: dry run).")
     parser.add_argument(
@@ -278,6 +353,7 @@ def eval_main(argv: list[str] | None = None) -> None:
         image=args.image,
         env_names=env_names,
         replicas=args.replicas,
+        region=args.region,
     )
     _submit_or_dry_run(request, args.preset, submit=args.submit, cluster=args.cluster, name=name)
 
