@@ -186,3 +186,38 @@ surfaces a **corpus-prep follow-up**: filter functions whose body is only a
 docstring (require ≥1 non-docstring statement) at prep time, so they never enter
 the corpus. Class 1 (alien out-of-scope grafts) is unaddressed by (b) and is the
 reason to still do (a).
+
+## Update: pre-launch hardening (2026-07-17) — H1 (eval match) + H2 (step cap)
+
+A second gut-check at the **actual launch config** (`p_near_miss=0.85`) found
+bank-swap still ~40% — because ~1/3 of corpus programs are trivial (abstract
+stubs, one-line wrappers, single-name bodies) with no flippable operator and < 2
+in-scope names, so *no realistic mode can fire* and they fall to alien bank-swap.
+Raising `p_near_miss` can't fix this; it's a corpus property. (Corpus-prep
+follow-up: also filter these trivial functions, alongside docstring-only ones.)
+
+Two fixes landed before launch:
+
+- **H1 — train/eval corruption match.** The MBPP eval was corrupting with plain
+  bank-swap (`corruption_steps=3`, no near-miss), so we'd have trained on
+  realistic bugs and *tested* on alien grafts. Extracted the corruption cascade
+  into one shared policy — `kelp.tree.corruption.corrupt_realistic` — now used by
+  training, the evaluator, and the inspector alike (single source of truth). The
+  evaluator gained `--p-near-miss` (in the result fingerprint, so runs shard
+  separately). We run **two** evals per checkpoint: *matched* (`p_near_miss=0.85`
+  — did it learn the trained task?) and *unmatched* (`0.0` — does it transfer to
+  a different bug distribution?).
+- **H2 — corruption-step cap.** Training ramped to `max_corruption_steps=5`
+  while eval used 3, and 5 simultaneous near-miss bugs is unrealistic. Capped
+  both to **2** (`scripts/train_vet_cond_v2.sh` / `scripts/eval_vet_cond_v2.sh`).
+
+Runbooks: `scripts/train_vet_cond_v2.sh` (launch) and
+`scripts/eval_vet_cond_v2.sh` (matched + unmatched eval, dry-run by default).
+
+**What we hope to learn:** whether realistic training corruption closes the
+vet-cond-v1 gap — MBPP repair (from ~2%), *matched* eval repair (from 27.3%),
+edit validity (from 23%), and per-bug-type breakdown / transfer to the unmatched
+distribution. **Iteration levers:** intermediate-checkpoint evals on Iris →
+live W&B repair-vs-step curves (resumable, fingerprinted); A/B v2-vs-v1 on the
+same eval config; 50-task fast loop vs 500-task final; bf16 (#132) for
+steps/hour.

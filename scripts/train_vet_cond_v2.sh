@@ -30,6 +30,10 @@ CORPUS_FILE="${CORPUS_FILE:-gs://marin-us-east5/kelp/corpus/stack_edu_python_vet
 OUTPUT_DIR="${OUTPUT_DIR:-gs://marin-us-east5/kelp/checkpoints/vet-cond-v2}"
 STEPS="${STEPS:-50000}"
 P_NEAR_MISS="${P_NEAR_MISS:-0.85}"
+# Cap corruption at 2 steps: realistic bugs are usually 1-2 edits, and this
+# matches the eval's --corruption-steps (see scripts/eval_vet_cond_v2.sh). The
+# linear curriculum still ramps 1 -> MAX_CORRUPTION_STEPS over warmup.
+MAX_CORRUPTION_STEPS="${MAX_CORRUPTION_STEPS:-2}"
 P_PROMPT="${P_PROMPT:-0.5}"
 CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-5000}"
 SEED="${SEED:-42}"
@@ -66,6 +70,7 @@ uv run kelp-launch "${LAUNCH_FLAGS[@]}" \
     --prompt-conditioning \
     --p-prompt "$P_PROMPT" \
     --p-near-miss "$P_NEAR_MISS" \
+    --max-corruption-steps "$MAX_CORRUPTION_STEPS" \
     --corruption-curriculum linear \
     --data-loader streaming \
     --output-dir "$OUTPUT_DIR" \

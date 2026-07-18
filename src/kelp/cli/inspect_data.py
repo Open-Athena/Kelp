@@ -21,12 +21,7 @@ import random
 import sys
 
 from kelp.corpus import extract_docstring, load_corpus
-from kelp.tree.egraph_augmentation import near_miss_corrupt_program
-from kelp.tree.mutation import (
-    corrupt_program,
-    operator_flip_corrupt_program,
-    variable_swap_corrupt_program,
-)
+from kelp.tree.corruption import corrupt_realistic
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tree_diff import find_path
 
@@ -45,20 +40,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def _corrupt(clean: str, bank: SubtreeBank, rng: random.Random, args: argparse.Namespace) -> tuple[str, str]:
-    """Return (corrupted, mode) mirroring the training corruption branch."""
+    """Return (corrupted, mode) via the same shared policy train/eval use."""
     steps = rng.randint(1, args.max_corruption_steps)
-    if args.p_near_miss > 0 and rng.random() < args.p_near_miss:
-        corrupted, _ = operator_flip_corrupt_program(clean, num_steps=steps, rng=rng)
-        if corrupted != clean:
-            return corrupted, "op-flip"
-        corrupted, _ = variable_swap_corrupt_program(clean, num_steps=steps, rng=rng)
-        if corrupted != clean:
-            return corrupted, "var-swap"
-        corrupted, _ = near_miss_corrupt_program(clean, num_steps=steps, rng=rng)
-        if corrupted != clean:
-            return corrupted, "near-miss"
-    corrupted, _ = corrupt_program(clean, num_steps=steps, bank=bank, max_edit_stmts=args.max_edit_stmts, rng=rng)
-    return corrupted, "bank-swap"
+    return corrupt_realistic(
+        clean,
+        num_steps=steps,
+        bank=bank,
+        rng=rng,
+        p_near_miss=args.p_near_miss,
+        max_edit_stmts=args.max_edit_stmts,
+    )
 
 
 def main() -> int:

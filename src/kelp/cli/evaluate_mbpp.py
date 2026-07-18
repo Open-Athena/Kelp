@@ -51,7 +51,7 @@ from kelp.inference.beam_search import best_of_n
 from kelp.model.checkpointing import find_best_checkpoint, load_checkpoint
 from kelp.model.config import EditModelConfig
 from kelp.model.edit_model import EditModelParams
-from kelp.tree.mutation import corrupt_program
+from kelp.tree.corruption import corrupt_realistic
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
 
@@ -125,11 +125,18 @@ def evaluate_mbpp_task(
     key: jax.Array,
     num_corruptions: int = 5,
     corruption_steps: int = 3,
+    p_near_miss: float = 0.0,
     n_best_of: int = 16,
     max_depth: int = 10,
     constrain_position: bool = False,
 ) -> dict:
-    """Evaluate a single MBPP task across multiple corruption/repair trials."""
+    """Evaluate a single MBPP task across multiple corruption/repair trials.
+
+    ``p_near_miss`` selects the corruption distribution via the shared
+    :func:`kelp.tree.corruption.corrupt_realistic` policy: set it to the training
+    run's value to measure the *trained* task (matched eval), or 0.0 for the
+    original out-of-context bank-swap (unmatched / generalization eval).
+    """
     clean = task["clean"]
     tests = task["tests"]
     setup_code = task.get("setup_code", "")
@@ -147,11 +154,12 @@ def evaluate_mbpp_task(
     for _trial in range(num_corruptions):
         key, _corrupt_key, search_key = jax.random.split(key, 3)
 
-        corrupted, _mutations = corrupt_program(
+        corrupted, _mode = corrupt_realistic(
             clean,
             num_steps=corruption_steps,
             bank=bank,
             rng=rng,
+            p_near_miss=p_near_miss,
         )
 
         if corrupted == clean:
@@ -233,6 +241,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-corruptions", type=int, default=5, help="Corruption trials per task")
     parser.add_argument("--corruption-steps", type=int, default=3, help="AST mutations per corruption")
+    parser.add_argument(
+        "--p-near-miss",
+        type=float,
+        default=0.0,
+        help="Fraction of trials corrupted with realistic in-context bugs (matches training's "
+        "--p-near-miss). 0.0 = original bank-swap corruption (unmatched/generalization eval)",
+    )
     parser.add_argument("--n-best-of", type=int, default=16, help="Number of independent rollouts")
     parser.add_argument("--max-depth", type=int, default=10, help="Maximum edit depth")
     parser.add_argument(
@@ -312,6 +327,7 @@ def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
             "seed": args.seed,
             "num_corruptions": args.num_corruptions,
             "corruption_steps": args.corruption_steps,
+            "p_near_miss": args.p_near_miss,
             "n_best_of": args.n_best_of,
             "max_depth": args.max_depth,
             "corpus_file": args.corpus_file,
@@ -393,6 +409,7 @@ def main():
             key=task_key,
             num_corruptions=args.num_corruptions,
             corruption_steps=args.corruption_steps,
+            p_near_miss=args.p_near_miss,
             n_best_of=args.n_best_of,
             max_depth=args.max_depth,
             constrain_position=args.constrain_position,
@@ -459,6 +476,7 @@ def main():
         "config": {
             "num_corruptions": args.num_corruptions,
             "corruption_steps": args.corruption_steps,
+            "p_near_miss": args.p_near_miss,
             "n_best_of": args.n_best_of,
             "max_depth": args.max_depth,
             "max_tasks": args.max_tasks,
