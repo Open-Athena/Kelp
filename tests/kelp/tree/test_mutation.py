@@ -230,6 +230,31 @@ def test_find_candidates_skips_root_functiondef(bank):
     assert any(t in candidate_types for t in ("Return", "BinOp"))
 
 
+def test_find_candidates_excludes_docstring(bank):
+    """A bare string-literal statement (docstring) must never be a bank-swap
+    candidate: swapping it makes the repair target a verbatim string the model
+    must reproduce rather than a localized edit.
+    """
+    source = 'def f(x):\n    """Compute something important about x."""\n    return x + 1\n'
+    tree = ast.parse(source)
+
+    candidates = _find_candidates(source, tree, max_edit_stmts=3, bank=bank)
+    docstring = '"""Compute something important about x."""'
+    for c in candidates:
+        assert source[c.start : c.end] != docstring, "docstring statement leaked into candidates"
+    # A real, non-docstring node is still eligible (the filter is not over-broad).
+    assert any(source[c.start : c.end] == "x + 1" for c in candidates)
+
+
+def test_corrupt_program_never_targets_docstring(bank):
+    """End-to-end: across many seeds, corruption never rewrites the docstring."""
+    source = 'def f(x):\n    """Compute something important about x."""\n    return x + 1\n'
+    for seed in range(30):
+        _corrupted, mutations = corrupt_program(source, num_steps=1, bank=bank, rng=random.Random(seed))
+        for m in mutations:
+            assert m.original.strip() != '"""Compute something important about x."""'
+
+
 def test_corruption_preserves_function_signature(bank):
     """After corruption, the top-level function name and args should survive."""
     source = CORPUS[0]  # fibonacci

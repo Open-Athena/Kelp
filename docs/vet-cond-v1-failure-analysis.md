@@ -169,3 +169,14 @@ bank-swap is rare; (b) exclude docstring/string-`Constant` nodes from bank-swap
 candidates in `mutation._find_candidates` (kills classes 2 and most no-ops); (c)
 treat the e-graph path as optional/removable from the hot path. Then retrain
 vet-cond-v2 and re-measure on the realistic eval.
+
+**(b) done** (`mutation._is_string_expr` filters bare string-literal statements
+from `_find_candidates`). Re-rendered the same 30-example slice: **all
+docstring-synthesis targets gone**. The dropped-example count rose 3→5 because
+docstring-*only* functions (`def eat(self, food): """Eat food product."""`) now
+have no editable node and fall through to "dropped" instead of "reproduce this
+string" — strictly better (a body-less function has nothing to repair). This
+surfaces a **corpus-prep follow-up**: filter functions whose body is only a
+docstring (require ≥1 non-docstring statement) at prep time, so they never enter
+the corpus. Class 1 (alien out-of-scope grafts) is unaddressed by (b) and is the
+reason to still do (a).

@@ -62,6 +62,23 @@ class Mutation:
         return source[: self.start] + self.replacement + source[self.end :]
 
 
+def _is_string_expr(node: ast.AST) -> bool:
+    """True if ``node`` is a bare string-literal statement (a docstring or a
+    stray string expression).
+
+    Bank-swapping such a node makes the repair *target* a long verbatim string
+    the model must reproduce token-for-token -- synthesis, not localized repair
+    -- and, since the docstring is also fed to the model as the prompt, the
+    example is either degenerate (copyable from the prompt) or impossible. Both
+    are excluded from bank-swap candidates. See the 2026-07-17 gut-check in
+    docs/vet-cond-v1-failure-analysis.md.
+    """
+    if not isinstance(node, ast.Expr):
+        return False
+    value = node.value
+    return isinstance(value, ast.JoinedStr) or (isinstance(value, ast.Constant) and isinstance(value.value, str))
+
+
 def _find_candidates(
     source: str,
     tree: ast.Module,
@@ -75,6 +92,8 @@ def _find_candidates(
     3. The bank has replacement candidates of the same type.
     5. Its source segment is non-trivial (>= 5 chars).
     6. It is not a root-level node (direct child of Module.body).
+    7. It is not a bare string-literal statement (docstring); see
+       :func:`_is_string_expr`.
     """
     # Skip root-level nodes to prevent catastrophic corruption that replaces
     # entire top-level definitions. For single-function programs (the common
@@ -90,6 +109,8 @@ def _find_candidates(
         if not bank.has_type(pn.node_type):
             continue
         if pn.end - pn.start < 5:
+            continue
+        if _is_string_expr(pn.node):
             continue
         candidates.append(pn)
 
