@@ -60,7 +60,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-EXCLUDE_DIRS = {".venv", "__pycache__", ".git", "node_modules", "checkpoints", ".eggs", "build", "dist"}
+EXCLUDE_DIRS = {
+    ".venv", "__pycache__", ".git", "node_modules", "checkpoints", ".eggs", "build", "dist", "test", "tests"
+}
 
 # Eval-task decontamination signatures live in kelp.eval_tasks (derived from
 # EVAL_TASKS), so they can never drift out of sync with the eval set.
@@ -103,21 +105,29 @@ def extract_functions_from_file(source: str, max_length: int, *, require_docstri
     return functions
 
 
-def extract_local_functions(source_dir: Path, max_length: int) -> list[str]:
-    """Extract Python functions from a local directory tree."""
+def extract_local_functions(source_dir: Path, max_length: int, *, require_docstring: bool = False) -> list[str]:
+    """Extract Python functions from a local directory tree.
+
+    When ``require_docstring`` is set, only functions carrying a docstring are
+    kept -- used to build a prompt-conditioning corpus from library source (where
+    the docstring is the intent signal).
+    """
     logger.info(f"Extracting functions from {source_dir}...")
     functions = []
     file_count = 0
 
     for py_file in source_dir.rglob("*.py"):
-        if any(part in EXCLUDE_DIRS for part in py_file.parts):
+        # Match EXCLUDE_DIRS against the path *relative to* source_dir, so an
+        # explicitly-requested library under .venv/site-packages is scanned
+        # (only nested build/test/venv dirs within the tree are skipped).
+        if any(part in EXCLUDE_DIRS for part in py_file.relative_to(source_dir).parts):
             continue
         file_count += 1
         try:
             source = py_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        functions.extend(extract_functions_from_file(source, max_length))
+        functions.extend(extract_functions_from_file(source, max_length, require_docstring=require_docstring))
 
     logger.info(f"  Scanned {file_count} files, extracted {len(functions)} functions")
     return functions
@@ -472,7 +482,9 @@ def main():
         logger.info("  Local extraction: skipped (--no-local)")
     else:
         for source_dir in source_dirs:
-            local_funcs = extract_local_functions(source_dir, args.max_length)
+            local_funcs = extract_local_functions(
+                source_dir, args.max_length, require_docstring=args.require_docstring
+            )
             all_programs.extend(local_funcs)
 
     # Source: Stack Edu from Marin GCS (works offline from HuggingFace).
