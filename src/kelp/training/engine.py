@@ -137,6 +137,12 @@ class EditTrainingConfig:
     """Probability of including a docstring prompt when one is available.
     Only effective when the model config has prompt_tokens=True."""
 
+    p_near_miss: float = 0.0
+    """Probability of corrupting with an e-graph near-miss (realistic in-context
+    operator-flip bug) instead of a bank subtree swap, on the forward-diffusion
+    branch. Falls back to bank swap when no near-miss is available. 0.0 = original
+    bank-swap corruption."""
+
     wandb_entity: str | None = "open-athena"
     """W&B entity (team/user). Defaults to open-athena."""
 

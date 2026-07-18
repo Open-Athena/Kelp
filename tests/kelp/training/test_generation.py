@@ -93,3 +93,27 @@ def test_random_branch_metadata(bank, tokenizer):
     for ex in found:
         assert ex.is_random is True
         assert ex.corruption_steps == 0
+
+
+def test_p_near_miss_threads_and_generates(bank, tokenizer):
+    """The near-miss corruption knob plumbs through the config and still yields
+    valid examples (forward-diffusion branch, always near-miss)."""
+    cfg = GenerationConfig(p_random=0.0, p_near_miss=1.0)
+    ex = _gen(bank, tokenizer, 1, gen_cfg=cfg)
+    assert ex is not None and ex.is_random is False
+
+
+def test_from_training_config_carries_p_near_miss():
+    from kelp.training.engine import EditTrainingConfig
+
+    tc = EditTrainingConfig(model=_model_cfg_for_test(), p_near_miss=0.7)
+    assert GenerationConfig.from_training_config(tc).p_near_miss == 0.7
+
+
+def _model_cfg_for_test():
+    from kelp.model.config import EditModelConfig
+
+    return EditModelConfig(
+        vocab_size=300, hidden_dim=32, intermediate_dim=64, num_layers=2,
+        num_heads=2, num_kv_heads=2, max_seq_len=MAX_SEQ_LEN,
+    )

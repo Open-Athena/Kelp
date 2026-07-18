@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from kelp.corpus import extract_docstring
+from kelp.tree.egraph_augmentation import near_miss_corrupt_program
 from kelp.tree.mutation import corrupt_program
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
@@ -49,6 +50,12 @@ class GenerationConfig:
     p_prompt: float = 0.5
     """Probability of including a docstring prompt when one is available."""
 
+    p_near_miss: float = 0.0
+    """On the forward-diffusion branch, probability of corrupting with an e-graph
+    near-miss (a realistic in-context operator-flip bug) instead of a bank
+    subtree swap. Falls back to the bank swap when no near-miss is available for
+    the program. 0.0 keeps the original bank-swap corruption."""
+
     @staticmethod
     def from_training_config(config: "EditTrainingConfig") -> "GenerationConfig":
         """Build from an EditTrainingConfig (the inline training path's config)."""
@@ -56,6 +63,7 @@ class GenerationConfig:
             max_edit_stmts=config.max_edit_stmts,
             p_random=config.p_random,
             p_prompt=config.p_prompt,
+            p_near_miss=config.p_near_miss,
         )
 
 
@@ -117,13 +125,21 @@ def generate_example(
     else:
         # Apply random AST mutations.
         corruption_steps = rng.randint(1, max_corruption_steps)
-        corrupted, _mutations = corrupt_program(
-            clean_source,
-            num_steps=corruption_steps,
-            bank=bank,
-            max_edit_stmts=gen_cfg.max_edit_stmts,
-            rng=rng,
-        )
+        corrupted = clean_source
+        if gen_cfg.p_near_miss > 0 and rng.random() < gen_cfg.p_near_miss:
+            # Realistic in-context corruption: flip an operator in one of the
+            # program's own expressions via an e-graph near-miss rewrite.
+            corrupted, _mutations = near_miss_corrupt_program(clean_source, num_steps=corruption_steps, rng=rng)
+        if corrupted == clean_source:
+            # No near-miss available (or near-miss disabled): fall back to a
+            # bank subtree swap so we always produce a corruption.
+            corrupted, _mutations = corrupt_program(
+                clean_source,
+                num_steps=corruption_steps,
+                bank=bank,
+                max_edit_stmts=gen_cfg.max_edit_stmts,
+                rng=rng,
+            )
 
     # Step 2: Compute TreeDiff path from corrupted to clean.
     path = find_path(corrupted, clean_source, max_edit_stmts=gen_cfg.max_edit_stmts)

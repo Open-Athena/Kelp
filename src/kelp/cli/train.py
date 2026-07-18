@@ -112,6 +112,13 @@ def parse_args() -> argparse.Namespace:
         help="Probability of including a docstring prompt when available (default: 0.5)",
     )
     parser.add_argument(
+        "--p-near-miss",
+        type=float,
+        default=0.0,
+        help="Probability of corrupting with an e-graph near-miss (realistic operator-flip bug) "
+        "instead of a bank subtree swap; falls back to bank swap when unavailable (default: 0.0)",
+    )
+    parser.add_argument(
         "--data-loader",
         type=str,
         default="inline",
@@ -200,6 +207,7 @@ def main():
         corruption_curriculum=args.corruption_curriculum,
         curriculum_warmup_fraction=args.curriculum_warmup_fraction,
         p_prompt=args.p_prompt,
+        p_near_miss=args.p_near_miss,
     )
 
     # Resume from the latest checkpoint in output_dir if one exists (e.g. after a
