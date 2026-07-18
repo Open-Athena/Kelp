@@ -20,7 +20,6 @@ import logging
 import random
 import sys
 
-from kelp.cli._logging import configure_logging
 from kelp.corpus import extract_docstring, load_corpus
 from kelp.tree.egraph_augmentation import near_miss_corrupt_program
 from kelp.tree.mutation import (
@@ -63,7 +62,9 @@ def _corrupt(clean: str, bank: SubtreeBank, rng: random.Random, args: argparse.N
 
 
 def main() -> int:
-    configure_logging()
+    # The rendered output goes through print(); silence the INFO flood from the
+    # subtree bank build and (loudly) from egglog's equality-saturation engine.
+    logging.disable(logging.INFO)
     args = parse_args()
     corpus = load_corpus(args.corpus_file)
     bank = SubtreeBank.from_corpus(corpus)
@@ -89,7 +90,10 @@ def main() -> int:
         print("  --- CORRUPTED (model input) ---")
         print("    " + corrupted.rstrip().replace("\n", "\n    "))
         if edit is not None:
-            print(f"  --- FIRST EDIT (model must produce): @pos {edit.start}..{edit.end}  ->  {edit.replacement!r}")
+            print(
+                f"  --- FIRST EDIT (model must produce): "
+                f"@pos {edit.start}..{edit.end}  ->  {edit.replacement!r}"
+            )
     print("=" * 78)
     print(f"summary: {counts}  (no-path = corruption find_path failed -> example would be dropped)")
     return 0
