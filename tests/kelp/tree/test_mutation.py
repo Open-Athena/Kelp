@@ -26,7 +26,11 @@ from kelp.tree.mutation import (
     Mutation,
     _find_candidates,
     corrupt_program,
+    flip_one_operator,
+    operator_flip_corrupt_program,
     random_mutation,
+    swap_one_variable,
+    variable_swap_corrupt_program,
 )
 from kelp.tree.subtree_bank import SubtreeBank
 
@@ -238,3 +242,64 @@ def test_corruption_preserves_function_signature(bank):
         tree = ast.parse(corrupted)
         top_funcs = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
         assert "fibonacci" in top_funcs, f"Corruption replaced the root FunctionDef (seed={seed}):\n{corrupted}"
+
+
+# ---------------------------------------------------------------------------
+# Realistic in-context corruption: operator flip
+# ---------------------------------------------------------------------------
+
+
+def test_operator_flip_fires_inside_calls_and_subscripts():
+    """The defining contract: op-flip corrupts an operator whose operands are a
+    call and a subscript -- exactly the code the e-graph cannot model -- while
+    leaving both operands byte-for-byte intact.
+    """
+    source = "def f(a, b):\n    return self.compute(a) + b[0]\n"
+    mutation = flip_one_operator(source, random.Random(0))
+
+    assert mutation is not None
+    assert mutation.original == "+" and mutation.replacement != "+"
+    corrupted = mutation.apply(source)
+    ast.parse(corrupted)  # still valid Python
+    # Operands survive verbatim; only the operator token changed.
+    assert "self.compute(a)" in corrupted and "b[0]" in corrupted
+    assert corrupted != source
+
+
+def test_operator_flip_returns_none_without_operator():
+    """No flippable operator -> None, so the caller can fall through to another
+    corruption mechanism instead of silently no-op'ing."""
+    source = "def f(x):\n    return g(x)\n"
+    assert flip_one_operator(source, random.Random(0)) is None
+    corrupted, mutations = operator_flip_corrupt_program(source, num_steps=3, rng=random.Random(0))
+    assert corrupted == source and mutations == []
+
+
+# ---------------------------------------------------------------------------
+# Realistic in-context corruption: variable swap
+# ---------------------------------------------------------------------------
+
+
+def test_variable_swap_uses_only_in_scope_names():
+    """A swap replaces one name read with a *different* name already present in
+    the program (in-context), never an alien token."""
+    # Names that reach the swap pool are ast.Name reads (width, height, max) --
+    # parameters are ast.arg and don't count, so the body must use them.
+    source = "def f(width, height):\n    return max(width, height)\n"
+    mutation = swap_one_variable(source, random.Random(0))
+
+    assert mutation is not None
+    assert mutation.node_type == "Name"
+    assert mutation.replacement in {"max", "width", "height"}
+    assert mutation.replacement != mutation.original
+    corrupted = mutation.apply(source)
+    ast.parse(corrupted)
+    assert corrupted != source
+
+
+def test_variable_swap_returns_none_with_one_name():
+    """Fewer than two distinct names -> nothing plausible to swap in -> None."""
+    source = "def f():\n    return x\n"  # only one name: x
+    assert swap_one_variable(source, random.Random(0)) is None
+    corrupted, mutations = variable_swap_corrupt_program(source, num_steps=2, rng=random.Random(0))
+    assert corrupted == source and mutations == []

@@ -28,7 +28,11 @@ from typing import TYPE_CHECKING
 
 from kelp.corpus import extract_docstring
 from kelp.tree.egraph_augmentation import near_miss_corrupt_program
-from kelp.tree.mutation import corrupt_program
+from kelp.tree.mutation import (
+    corrupt_program,
+    operator_flip_corrupt_program,
+    variable_swap_corrupt_program,
+)
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
 from kelp.tree.tree_diff import find_path
@@ -127,9 +131,21 @@ def generate_example(
         corruption_steps = rng.randint(1, max_corruption_steps)
         corrupted = clean_source
         if gen_cfg.p_near_miss > 0 and rng.random() < gen_cfg.p_near_miss:
-            # Realistic in-context corruption: flip an operator in one of the
-            # program's own expressions via an e-graph near-miss rewrite.
-            corrupted, _mutations = near_miss_corrupt_program(clean_source, num_steps=corruption_steps, rng=rng)
+            # Realistic in-context corruption, tried most- to least-applicable:
+            #   1. operator-token flip -- a plausible single-operator bug, fires
+            #      on operators inside calls/subscripts/attributes that the
+            #      e-graph cannot model;
+            #   2. variable swap -- the classic wrong-variable bug, for the
+            #      operator-free code (calls, assignments, returns) that
+            #      dominates real corpora;
+            #   3. e-graph near-miss -- algebraic rewrites, as a last resort.
+            # Each keeps the corruption in-context (no alien bank tokens); we
+            # only fall through to a bank subtree swap when none applies.
+            corrupted, _mutations = operator_flip_corrupt_program(clean_source, num_steps=corruption_steps, rng=rng)
+            if corrupted == clean_source:
+                corrupted, _mutations = variable_swap_corrupt_program(clean_source, num_steps=corruption_steps, rng=rng)
+            if corrupted == clean_source:
+                corrupted, _mutations = near_miss_corrupt_program(clean_source, num_steps=corruption_steps, rng=rng)
         if corrupted == clean_source:
             # No near-miss available (or near-miss disabled): fall back to a
             # bank subtree swap so we always produce a corruption.

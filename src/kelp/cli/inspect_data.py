@@ -23,7 +23,11 @@ import sys
 from kelp.cli._logging import configure_logging
 from kelp.corpus import extract_docstring, load_corpus
 from kelp.tree.egraph_augmentation import near_miss_corrupt_program
-from kelp.tree.mutation import corrupt_program
+from kelp.tree.mutation import (
+    corrupt_program,
+    operator_flip_corrupt_program,
+    variable_swap_corrupt_program,
+)
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tree_diff import find_path
 
@@ -45,6 +49,12 @@ def _corrupt(clean: str, bank: SubtreeBank, rng: random.Random, args: argparse.N
     """Return (corrupted, mode) mirroring the training corruption branch."""
     steps = rng.randint(1, args.max_corruption_steps)
     if args.p_near_miss > 0 and rng.random() < args.p_near_miss:
+        corrupted, _ = operator_flip_corrupt_program(clean, num_steps=steps, rng=rng)
+        if corrupted != clean:
+            return corrupted, "op-flip"
+        corrupted, _ = variable_swap_corrupt_program(clean, num_steps=steps, rng=rng)
+        if corrupted != clean:
+            return corrupted, "var-swap"
         corrupted, _ = near_miss_corrupt_program(clean, num_steps=steps, rng=rng)
         if corrupted != clean:
             return corrupted, "near-miss"
@@ -60,7 +70,7 @@ def main() -> int:
     rng = random.Random(args.seed)
     sample = rng.sample(corpus, min(args.num, len(corpus)))
 
-    counts = {"near-miss": 0, "bank-swap": 0, "no-path": 0}
+    counts = {"op-flip": 0, "var-swap": 0, "near-miss": 0, "bank-swap": 0, "no-path": 0}
     for i, clean in enumerate(sample):
         corrupted, mode = _corrupt(clean, bank, rng, args)
         # The training target: the edit path from corrupted back to clean.
