@@ -2,16 +2,19 @@
 # Kelp vet-cond-v2 training: realistic in-context corruption on TPU (Iris).
 #
 # The successor to vet-cond-v1. Same ~115M tpu_vet model and prompt conditioning,
-# but the training task is fixed per docs/vet-cond-v1-failure-analysis.md:
+# with two changes per docs/vet-cond-v1-failure-analysis.md:
 #
-#   (a) --p-near-miss 0.85  -> most examples are realistic in-context bugs
-#       (operator-flip / variable-swap), so alien bank-swap grafts are rare.
-#   (b) docstring/string-literal statements are excluded from bank-swap
-#       candidates in code (mutation._is_string_expr) -- no runbook flag needed.
+#   1. Realistic-or-drop corruption: --p-near-miss 1.0 --no-bank-swap-fallback,
+#      so every example is an in-context operator-flip / variable-swap bug (or
+#      the program is dropped) -- zero alien bank-swap grafts.
+#   2. Curated corpus: ~8.1k high-quality, permissively-licensed library
+#      functions (CPython stdlib + scipy/numpy/networkx/Pallets/JAX-numerical/
+#      boltons/toolz/... ) with real docstrings, instead of scraped Stack Edu.
+#      Built at --max-length 900 to match the model's 1024 seq len.
 #
-# The corpus (stack_edu_python_vet.txt) is already prepared in GCS, so there is
-# no corpus-prep phase here. Re-run scripts/train_v7.sh-style prep only if you
-# need to regenerate it.
+# The corpus is already uploaded to GCS (see CORPUS_FILE), so there is no
+# corpus-prep phase here. To rebuild it, see the --source-dirs +
+# --require-docstring --require-corruptible flow in kelp.cli.prepare_corpus.
 #
 # Dry-run by default (kelp-launch prints the JobRequest and submits nothing).
 # Pass --submit to actually launch on the cluster.
@@ -26,7 +29,7 @@
 set -euo pipefail
 
 PRESET="${PRESET:-tpu_vet}"
-CORPUS_FILE="${CORPUS_FILE:-gs://marin-us-east5/kelp/corpus/stack_edu_python_vet.txt}"
+CORPUS_FILE="${CORPUS_FILE:-gs://marin-us-east5/kelp/corpus/curated_v2.txt}"
 OUTPUT_DIR="${OUTPUT_DIR:-gs://marin-us-east5/kelp/checkpoints/vet-cond-v2}"
 STEPS="${STEPS:-50000}"
 # Realistic-or-drop: always attempt an in-context corruption; drop the program

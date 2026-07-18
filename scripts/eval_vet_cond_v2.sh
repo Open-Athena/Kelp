@@ -28,7 +28,7 @@ set -euo pipefail
 PRESET="${PRESET:-tpu_vet}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-gs://marin-us-east5/kelp/checkpoints/vet-cond-v2}"
 CHECKPOINT="${CHECKPOINT:-}"  # specific step-XXXXXX; empty => latest in CHECKPOINT_DIR
-CORPUS_FILE="${CORPUS_FILE:-gs://marin-us-east5/kelp/corpus/stack_edu_python_vet.txt}"
+CORPUS_FILE="${CORPUS_FILE:-gs://marin-us-east5/kelp/corpus/curated_v2.txt}"
 CORRUPTION_STEPS="${CORRUPTION_STEPS:-2}"
 NUM_CORRUPTIONS="${NUM_CORRUPTIONS:-5}"
 N_BEST_OF="${N_BEST_OF:-16}"

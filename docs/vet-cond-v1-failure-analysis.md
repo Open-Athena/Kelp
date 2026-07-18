@@ -244,3 +244,26 @@ regeneration** (the load-time drop handles it).
 pre-filtered corpus and avoid ~40% wasted sampling. It is **off by default and
 must write to a new path — Marin's corpus is never overwritten**; regenerating is
 optional since the training-time drop already cleans the data.
+
+## Update: curated library corpus for vet-cond-v2 (2026-07-18)
+
+Stack Edu is a poor fit for a *prompt-conditioned* repair task — the docstring is
+the intent signal, and scraped educational code has noisy, terse, or non-English
+docstrings plus many trivial functions. Replaced it with a **curated corpus of
+~8.1k functions** built (via `prepare_corpus --source-dirs … --require-docstring
+--require-corruptible`) from permissively-licensed libraries with real docstrings:
+CPython stdlib (PSF), scipy/numpy/networkx/Pallets/django.utils/boltons/toolz/
+sortedcontainers (BSD/MIT/Apache), and JAX numerical subdirs (Apache-2.0). Built
+at `--max-length 900` to match the model's 1024 `max_seq_len` (the 512 default
+was silently dropping the best-documented, longest-docstring functions).
+
+Gut-check: ~95% of examples yield realistic in-context corruptions (op-flip /
+var-swap), **zero alien grafts**, and a data-pipeline smoke test produces
+well-formed prompt-conditioned batches at seq_len 1024. Uploaded to a **new**
+path `gs://…/kelp/corpus/curated_v2.txt` (Stack Edu untouched); both runbooks
+point at it. Two corpus-hygiene bugs were fixed while building it: local
+extraction matched `EXCLUDE_DIRS` against the absolute path (so every library
+under `.venv` yielded nothing) and scanned nested `site-packages`/`_vendor`
+(pulling in pip's vendored third-party code). The `{prompt, program}` corpus
+remains the future step to recover the longest-docstring functions (scipy/sklearn)
+and compose class-context into the prompt.
