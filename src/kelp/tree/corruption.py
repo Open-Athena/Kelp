@@ -87,9 +87,7 @@ def corrupt_realistic(
             return corrupted, "near-miss"
     if not allow_bank_swap:
         return source, SKIPPED
-    corrupted, _ = corrupt_program(
-        source, num_steps=num_steps, bank=bank, max_edit_stmts=max_edit_stmts, rng=rng
-    )
+    corrupted, _ = corrupt_program(source, num_steps=num_steps, bank=bank, max_edit_stmts=max_edit_stmts, rng=rng)
     return corrupted, BANK_SWAP
 
 

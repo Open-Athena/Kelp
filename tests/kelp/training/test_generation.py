@@ -114,6 +114,11 @@ def _model_cfg_for_test():
     from kelp.model.config import EditModelConfig
 
     return EditModelConfig(
-        vocab_size=300, hidden_dim=32, intermediate_dim=64, num_layers=2,
-        num_heads=2, num_kv_heads=2, max_seq_len=MAX_SEQ_LEN,
+        vocab_size=300,
+        hidden_dim=32,
+        intermediate_dim=64,
+        num_layers=2,
+        num_heads=2,
+        num_kv_heads=2,
+        max_seq_len=MAX_SEQ_LEN,
     )

@@ -61,12 +61,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 EXCLUDE_DIRS = {
-    ".venv", "__pycache__", ".git", "node_modules", "checkpoints", ".eggs", "build", "dist", "test", "tests",
+    ".venv",
+    "__pycache__",
+    ".git",
+    "node_modules",
+    "checkpoints",
+    ".eggs",
+    "build",
+    "dist",
+    "test",
+    "tests",
     # Nested third-party/vendored trees: a bundled site-packages (e.g. under a
     # stdlib install) or a _vendor dir pulls in code of unknown/mixed provenance.
     # Matched relative to source_dir, so this never blocks a library pointed at
     # directly (its own path lives *under* an ancestor site-packages).
-    "site-packages", "dist-packages", "_vendor", "vendored",
+    "site-packages",
+    "dist-packages",
+    "_vendor",
+    "vendored",
 }
 
 # Eval-task decontamination signatures live in kelp.eval_tasks (derived from
@@ -487,9 +499,7 @@ def main():
         logger.info("  Local extraction: skipped (--no-local)")
     else:
         for source_dir in source_dirs:
-            local_funcs = extract_local_functions(
-                source_dir, args.max_length, require_docstring=args.require_docstring
-            )
+            local_funcs = extract_local_functions(source_dir, args.max_length, require_docstring=args.require_docstring)
             all_programs.extend(local_funcs)
 
     # Source: Stack Edu from Marin GCS (works offline from HuggingFace).

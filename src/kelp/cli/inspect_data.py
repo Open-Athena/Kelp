@@ -88,10 +88,7 @@ def main() -> int:
         print("  --- CORRUPTED (model input) ---")
         print("    " + corrupted.rstrip().replace("\n", "\n    "))
         if edit is not None:
-            print(
-                f"  --- FIRST EDIT (model must produce): "
-                f"@pos {edit.start}..{edit.end}  ->  {edit.replacement!r}"
-            )
+            print(f"  --- FIRST EDIT (model must produce): @pos {edit.start}..{edit.end}  ->  {edit.replacement!r}")
     print("=" * 78)
     print(f"summary: {counts}  (no-path = corruption find_path failed -> example would be dropped)")
     return 0
