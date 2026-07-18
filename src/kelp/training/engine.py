@@ -143,6 +143,11 @@ class EditTrainingConfig:
     branch. Falls back to bank swap when no near-miss is available. 0.0 = original
     bank-swap corruption."""
 
+    allow_bank_swap: bool = True
+    """When False, drop programs with no realistic corruption instead of injecting
+    an out-of-context bank subtree swap (realistic-or-drop training, zero alien
+    grafts). Set via --no-bank-swap-fallback."""
+
     wandb_entity: str | None = "open-athena"
     """W&B entity (team/user). Defaults to open-athena."""
 

@@ -19,16 +19,20 @@ import random
 from kelp.tree.egraph_augmentation import near_miss_corrupt_program
 from kelp.tree.mutation import (
     corrupt_program,
+    flip_one_operator,
     operator_flip_corrupt_program,
+    swap_one_variable,
     variable_swap_corrupt_program,
 )
 from kelp.tree.subtree_bank import SubtreeBank
 
 # Corruption mode labels, useful for gut-check rendering and per-type eval
-# breakdowns. "bank-swap" is the out-of-context fallback; the rest are the
+# breakdowns. "bank-swap" is the out-of-context fallback; "skipped" means no
+# corruption was produced (caller should drop the example); the rest are the
 # realistic in-context modes.
 REALISTIC_MODES = ("op-flip", "var-swap", "near-miss")
 BANK_SWAP = "bank-swap"
+SKIPPED = "skipped"
 
 
 def corrupt_realistic(
@@ -39,6 +43,7 @@ def corrupt_realistic(
     rng: random.Random,
     p_near_miss: float,
     max_edit_stmts: int = 3,
+    allow_bank_swap: bool = True,
 ) -> tuple[str, str]:
     """Corrupt ``source``, preferring realistic in-context bugs.
 
@@ -51,19 +56,26 @@ def corrupt_realistic(
        (calls, assignments, returns) that dominates real corpora;
     3. **e-graph near-miss** — algebraic rewrites, as a last resort.
 
-    When the realistic branch is skipped (probability ``1 - p_near_miss``) or no
-    realistic mode applies (trivial functions: no flippable operator, < 2 in-scope
-    names), it falls back to an out-of-context bank subtree swap so a corruption
-    is always produced.
+    When no realistic mode applies (trivial functions: no flippable operator,
+    < 2 in-scope names) the fallback depends on ``allow_bank_swap``:
 
-    ``p_near_miss <= 0`` reproduces the original bank-swap-only behavior *without
-    consuming an rng draw* (short-circuit), preserving determinism of existing
-    seeds.
+    - ``True`` (default): fall back to an out-of-context bank subtree swap so a
+      corruption is always produced (returns mode :data:`BANK_SWAP`).
+    - ``False``: produce **no** corruption — return ``(source, SKIPPED)`` so the
+      caller drops the example. This eliminates alien out-of-context grafts
+      entirely; combined with the cascade it yields realistic-or-drop training.
+      In this mode the realistic cascade is *always* attempted regardless of
+      ``p_near_miss`` (skipping it would drop corruptible programs for no gain).
+
+    ``allow_bank_swap=True`` with ``p_near_miss <= 0`` reproduces the original
+    bank-swap-only behavior *without consuming an rng draw* (short-circuit),
+    preserving determinism of existing seeds.
 
     Returns ``(corrupted_source, mode)`` where ``mode`` is one of
-    :data:`REALISTIC_MODES` or :data:`BANK_SWAP`.
+    :data:`REALISTIC_MODES`, :data:`BANK_SWAP`, or :data:`SKIPPED`.
     """
-    if p_near_miss > 0 and rng.random() < p_near_miss:
+    attempt_realistic = (not allow_bank_swap) or (p_near_miss > 0 and rng.random() < p_near_miss)
+    if attempt_realistic:
         corrupted, _ = operator_flip_corrupt_program(source, num_steps=num_steps, rng=rng)
         if corrupted != source:
             return corrupted, "op-flip"
@@ -73,7 +85,25 @@ def corrupt_realistic(
         corrupted, _ = near_miss_corrupt_program(source, num_steps=num_steps, rng=rng)
         if corrupted != source:
             return corrupted, "near-miss"
+    if not allow_bank_swap:
+        return source, SKIPPED
     corrupted, _ = corrupt_program(
         source, num_steps=num_steps, bank=bank, max_edit_stmts=max_edit_stmts, rng=rng
     )
     return corrupted, BANK_SWAP
+
+
+def has_corruptible_content(source: str) -> bool:
+    """True if a realistic in-context corruption can be produced for ``source``.
+
+    A program is corruptible-realistic when it has a flippable operator or at
+    least two distinct in-scope names to swap between. Trivial functions
+    (abstract stubs, one-line wrappers, single-name / docstring-only bodies) have
+    neither, so the only corruption available for them is an alien bank swap.
+
+    Used at corpus-prep time to drop such programs, so they never enter the
+    corpus and waste sampling that would only be dropped again at generation.
+    (Existence check only; the returned corruption is discarded.)
+    """
+    probe = random.Random(0)
+    return flip_one_operator(source, probe) is not None or swap_one_variable(source, probe) is not None

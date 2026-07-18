@@ -5,7 +5,13 @@
 
 import random
 
-from kelp.tree.corruption import BANK_SWAP, REALISTIC_MODES, corrupt_realistic
+from kelp.tree.corruption import (
+    BANK_SWAP,
+    REALISTIC_MODES,
+    SKIPPED,
+    corrupt_realistic,
+    has_corruptible_content,
+)
 from kelp.tree.subtree_bank import SubtreeBank
 
 CORPUS = [
@@ -36,6 +42,39 @@ def test_falls_back_to_bank_swap_when_no_realistic_mode_applies():
     src = "def f(self):\n    return self.compute()\n"
     _corrupted, mode = corrupt_realistic(src, num_steps=1, bank=bank, rng=random.Random(0), p_near_miss=1.0)
     assert mode == BANK_SWAP
+
+
+def test_no_bank_swap_fallback_skips_trivial_program_unchanged():
+    """With allow_bank_swap=False, a trivial program is returned unchanged and
+    marked SKIPPED (the caller drops it) -- never an alien graft."""
+    bank = _bank()
+    src = "def f(self):\n    return self.compute()\n"
+    corrupted, mode = corrupt_realistic(
+        src, num_steps=1, bank=bank, rng=random.Random(0), p_near_miss=1.0, allow_bank_swap=False
+    )
+    assert mode == SKIPPED
+    assert corrupted == src
+
+
+def test_no_bank_swap_fallback_attempts_cascade_regardless_of_p_near_miss():
+    """allow_bank_swap=False means realistic-only: the cascade is attempted even
+    at p_near_miss=0.0, so a corruptible program is still corrupted in-context."""
+    bank = _bank()
+    src = "def f(x):\n    return x % 2 == 0\n"
+    corrupted, mode = corrupt_realistic(
+        src, num_steps=1, bank=bank, rng=random.Random(0), p_near_miss=0.0, allow_bank_swap=False
+    )
+    assert mode in REALISTIC_MODES
+    assert corrupted != src
+
+
+def test_has_corruptible_content():
+    """True when a flippable operator or >=2 in-scope names exist; False for
+    trivial single-name / operator-free bodies."""
+    assert has_corruptible_content("def f(x):\n    return x % 2 == 0\n")  # operator
+    assert has_corruptible_content("def f(a, b):\n    return g(a, b)\n")  # two names
+    assert not has_corruptible_content("def f(self):\n    return self.compute()\n")  # trivial
+    assert not has_corruptible_content("def f(x):\n    return x\n")  # single name, no op
 
 
 def test_p_near_miss_zero_is_deterministic_bank_swap_without_extra_draw():

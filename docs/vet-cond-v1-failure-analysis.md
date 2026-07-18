@@ -221,3 +221,26 @@ distribution. **Iteration levers:** intermediate-checkpoint evals on Iris →
 live W&B repair-vs-step curves (resumable, fingerprinted); A/B v2-vs-v1 on the
 same eval config; 50-task fast loop vs 500-task final; bf16 (#132) for
 steps/hour.
+
+## Update: H3 — realistic-or-drop (no alien grafts) (2026-07-17)
+
+At the launch config, bank-swap was still ~40% because ~1/3 of Stack Edu programs
+are trivial (abstract stubs, one-line wrappers, single-name bodies) with no
+flippable operator and < 2 in-scope names — near-miss can't fire, so they fell to
+alien out-of-context bank-swap grafts (the diagnosed pathology).
+
+`corrupt_realistic` gained `allow_bank_swap` (CLI `--no-bank-swap-fallback` in
+train/eval/inspect). When off, the realistic cascade is *always* attempted and,
+if nothing applies, the program is **dropped** (`SKIPPED`) rather than
+bank-swapped. vet-cond-v2 trains realistic-or-drop (`p_near_miss=1.0
+--no-bank-swap-fallback`), and the matched eval mirrors it; the unmatched eval
+keeps pure bank-swap as the generalization reference. Gut-check with the flag:
+**bank-swap 0**, replaced by op-flip/var-swap, ~28% of programs dropped as
+trivial. Zero alien grafts in the training data — on the **existing corpus, no
+regeneration** (the load-time drop handles it).
+
+`prepare_corpus` also gained an **opt-in** `--require-corruptible` filter
+(`has_corruptible_content`: flippable operator or ≥ 2 in-scope names) to build a
+pre-filtered corpus and avoid ~40% wasted sampling. It is **off by default and
+must write to a new path — Marin's corpus is never overwritten**; regenerating is
+optional since the training-time drop already cleans the data.

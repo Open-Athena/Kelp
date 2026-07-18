@@ -126,6 +126,7 @@ def evaluate_mbpp_task(
     num_corruptions: int = 5,
     corruption_steps: int = 3,
     p_near_miss: float = 0.0,
+    allow_bank_swap: bool = True,
     n_best_of: int = 16,
     max_depth: int = 10,
     constrain_position: bool = False,
@@ -160,6 +161,7 @@ def evaluate_mbpp_task(
             bank=bank,
             rng=rng,
             p_near_miss=p_near_miss,
+            allow_bank_swap=allow_bank_swap,
         )
 
         if corrupted == clean:
@@ -248,6 +250,13 @@ def parse_args() -> argparse.Namespace:
         help="Fraction of trials corrupted with realistic in-context bugs (matches training's "
         "--p-near-miss). 0.0 = original bank-swap corruption (unmatched/generalization eval)",
     )
+    parser.add_argument(
+        "--no-bank-swap-fallback",
+        dest="allow_bank_swap",
+        action="store_false",
+        help="Skip trials where no realistic corruption applies instead of falling back to a "
+        "bank swap (matches training's --no-bank-swap-fallback). Always attempts the cascade.",
+    )
     parser.add_argument("--n-best-of", type=int, default=16, help="Number of independent rollouts")
     parser.add_argument("--max-depth", type=int, default=10, help="Maximum edit depth")
     parser.add_argument(
@@ -328,6 +337,7 @@ def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
             "num_corruptions": args.num_corruptions,
             "corruption_steps": args.corruption_steps,
             "p_near_miss": args.p_near_miss,
+            "allow_bank_swap": args.allow_bank_swap,
             "n_best_of": args.n_best_of,
             "max_depth": args.max_depth,
             "corpus_file": args.corpus_file,
@@ -410,6 +420,7 @@ def main():
             num_corruptions=args.num_corruptions,
             corruption_steps=args.corruption_steps,
             p_near_miss=args.p_near_miss,
+            allow_bank_swap=args.allow_bank_swap,
             n_best_of=args.n_best_of,
             max_depth=args.max_depth,
             constrain_position=args.constrain_position,

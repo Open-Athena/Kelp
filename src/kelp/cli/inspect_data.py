@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--p-near-miss", type=float, default=0.0, help="Fraction corrupted via e-graph near-miss")
     p.add_argument("--max-corruption-steps", type=int, default=1, help="Max mutations per corruption")
     p.add_argument("--max-edit-stmts", type=int, default=3, help="Max statements per bank-swap edit")
+    p.add_argument(
+        "--no-bank-swap-fallback",
+        dest="allow_bank_swap",
+        action="store_false",
+        help="Drop (skip) programs with no realistic corruption instead of bank-swapping them.",
+    )
     p.add_argument("--seed", type=int, default=0, help="Random seed")
     return p.parse_args()
 
@@ -49,6 +55,7 @@ def _corrupt(clean: str, bank: SubtreeBank, rng: random.Random, args: argparse.N
         rng=rng,
         p_near_miss=args.p_near_miss,
         max_edit_stmts=args.max_edit_stmts,
+        allow_bank_swap=args.allow_bank_swap,
     )
 
 
@@ -62,7 +69,7 @@ def main() -> int:
     rng = random.Random(args.seed)
     sample = rng.sample(corpus, min(args.num, len(corpus)))
 
-    counts = {"op-flip": 0, "var-swap": 0, "near-miss": 0, "bank-swap": 0, "no-path": 0}
+    counts = {"op-flip": 0, "var-swap": 0, "near-miss": 0, "bank-swap": 0, "skipped": 0, "no-path": 0}
     for i, clean in enumerate(sample):
         corrupted, mode = _corrupt(clean, bank, rng, args)
         # The training target: the edit path from corrupted back to clean.

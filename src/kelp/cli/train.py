@@ -119,6 +119,13 @@ def parse_args() -> argparse.Namespace:
         "instead of a bank subtree swap; falls back to bank swap when unavailable (default: 0.0)",
     )
     parser.add_argument(
+        "--no-bank-swap-fallback",
+        dest="allow_bank_swap",
+        action="store_false",
+        help="Drop programs with no realistic corruption instead of injecting an out-of-context "
+        "bank subtree swap (realistic-or-drop training). Always attempts the realistic cascade.",
+    )
+    parser.add_argument(
         "--data-loader",
         type=str,
         default="inline",
@@ -208,6 +215,7 @@ def main():
         curriculum_warmup_fraction=args.curriculum_warmup_fraction,
         p_prompt=args.p_prompt,
         p_near_miss=args.p_near_miss,
+        allow_bank_swap=args.allow_bank_swap,
     )
 
     # Resume from the latest checkpoint in output_dir if one exists (e.g. after a

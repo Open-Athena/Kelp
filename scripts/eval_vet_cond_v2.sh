@@ -4,10 +4,12 @@
 # Runs the MBPP repair eval twice against the same checkpoint, differing only in
 # the corruption distribution:
 #
-#   matched   (--p-near-miss 0.85) -- same realistic in-context bugs the model
-#             was trained on. Answers "did it learn the trained task?"
-#   unmatched (--p-near-miss 0.0)  -- the original out-of-context bank-swap.
-#             Answers "does the skill transfer to a different bug distribution?"
+#   matched   (--p-near-miss 1.0 --no-bank-swap-fallback) -- same realistic
+#             in-context bugs the model trained on (alien grafts dropped, not
+#             injected). Answers "did it learn the trained task?"
+#   unmatched (--p-near-miss 0.0, bank-swap) -- the original out-of-context
+#             bank-swap. Answers "does the skill transfer to a different bug
+#             distribution?"
 #
 # Both use --corruption-steps 2 to match training's capped corruption. The eval
 # fingerprint includes p_near_miss, so the two runs write separate result shards
@@ -48,7 +50,7 @@ if [ -n "$SUBMIT" ] && [ -z "${WANDB_API_KEY:-}" ]; then
 fi
 
 run_eval() {
-    local p_near_miss="$1" tag="$2"
+    local p_near_miss="$1" tag="$2" no_bank_swap="$3"
     local launch_flags=(--preset "$PRESET" --name "kelp-eval-v2-$tag")
     [ -n "$SUBMIT" ] && launch_flags+=("$SUBMIT")
     [ -n "$IMAGE" ] && launch_flags+=(--image "$IMAGE")
@@ -65,11 +67,13 @@ run_eval() {
         --wandb-project "$WANDB_PROJECT"
         --wandb-run-name "vet-cond-v2-eval-$tag"
     )
+    [ -n "$no_bank_swap" ] && eval_args+=(--no-bank-swap-fallback)
     [ -n "$CHECKPOINT" ] && eval_args+=(--checkpoint "$CHECKPOINT")
 
     echo "=== eval [$tag] p_near_miss=$p_near_miss steps=$CORRUPTION_STEPS tasks=$MAX_TASKS (${SUBMIT:-dry-run}) ==="
     uv run kelp-eval "${launch_flags[@]}" -- "${eval_args[@]}"
 }
 
-run_eval 0.85 matched
-run_eval 0.0 unmatched
+# matched: realistic-or-drop, mirrors training. unmatched: pure bank-swap.
+run_eval 1.0 matched --no-bank-swap-fallback
+run_eval 0.0 unmatched ""

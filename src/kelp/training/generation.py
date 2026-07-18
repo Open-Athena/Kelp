@@ -55,6 +55,12 @@ class GenerationConfig:
     subtree swap. Falls back to the bank swap when no near-miss is available for
     the program. 0.0 keeps the original bank-swap corruption."""
 
+    allow_bank_swap: bool = True
+    """When False, drop (return None for) programs with no realistic corruption
+    instead of injecting an out-of-context bank subtree swap. Yields
+    realistic-or-drop training data with zero alien grafts; the realistic cascade
+    is always attempted regardless of ``p_near_miss``."""
+
     @staticmethod
     def from_training_config(config: "EditTrainingConfig") -> "GenerationConfig":
         """Build from an EditTrainingConfig (the inline training path's config)."""
@@ -63,6 +69,7 @@ class GenerationConfig:
             p_random=config.p_random,
             p_prompt=config.p_prompt,
             p_near_miss=config.p_near_miss,
+            allow_bank_swap=config.allow_bank_swap,
         )
 
 
@@ -133,7 +140,10 @@ def generate_example(
             rng=rng,
             p_near_miss=gen_cfg.p_near_miss,
             max_edit_stmts=gen_cfg.max_edit_stmts,
+            allow_bank_swap=gen_cfg.allow_bank_swap,
         )
+        # allow_bank_swap=False can decline to corrupt (trivial program); the
+        # empty-path check below then drops the example.
 
     # Step 2: Compute TreeDiff path from corrupted to clean.
     path = find_path(corrupted, clean_source, max_edit_stmts=gen_cfg.max_edit_stmts)

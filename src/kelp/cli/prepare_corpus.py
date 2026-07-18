@@ -51,6 +51,7 @@ from etils import epath
 
 from kelp.corpus import CORPUS_SEPARATOR, extract_docstring
 from kelp.eval_tasks import EVAL_SIGNATURES
+from kelp.tree.corruption import has_corruptible_content
 
 logging.basicConfig(
     level=logging.INFO,
@@ -440,6 +441,15 @@ def parse_args() -> argparse.Namespace:
         help="Keep only functions that carry a docstring. Builds a corpus for prompt conditioning, "
         "where the docstring is the intent signal (function-level docstring coverage is otherwise low).",
     )
+    parser.add_argument(
+        "--require-corruptible",
+        action="store_true",
+        help="Keep only functions that admit a realistic in-context corruption (a flippable operator "
+        "or >=2 in-scope names). Drops trivial functions (abstract stubs, one-line wrappers) whose "
+        "only corruption is an alien bank swap. Write to a NEW output path -- never overwrite an "
+        "existing corpus. Off by default; the training-time --no-bank-swap-fallback drops these "
+        "at load time regardless, so regenerating the corpus is optional.",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed for shuffling")
     return parser.parse_args()
 
@@ -500,6 +510,12 @@ def main():
     logger.info(f"Total raw programs: {len(all_programs)}")
     filtered = deduplicate_and_filter(all_programs, args.max_length)
     logger.info(f"After dedup/filter: {len(filtered)} programs")
+
+    # Optional: drop programs with no realistic corruption (trivial functions).
+    if args.require_corruptible:
+        before = len(filtered)
+        filtered = [p for p in filtered if has_corruptible_content(p)]
+        logger.info(f"After --require-corruptible: {len(filtered)} programs ({before - len(filtered)} dropped)")
 
     # Shuffle for training diversity.
     rng.shuffle(filtered)
