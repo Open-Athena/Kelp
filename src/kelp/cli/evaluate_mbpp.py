@@ -352,10 +352,11 @@ def main():
     configure_logging()  # force stdout handler so INFO logs survive JAX/absl's root handler (visible in iris logs)
     args = parse_args()
 
-    if not args.allow_bank_swap and 0.0 < args.p_near_miss < 1.0:
+    if not args.allow_bank_swap and args.p_near_miss < 1.0:
         logger.warning(
             "--p-near-miss=%.2f is ignored because --no-bank-swap-fallback is set: the realistic "
-            "cascade is always attempted. Drop --no-bank-swap-fallback to honor the fraction.",
+            "cascade is always attempted (equivalent to p_near_miss=1.0). Drop --no-bank-swap-fallback "
+            "to honor the fraction.",
             args.p_near_miss,
         )
 

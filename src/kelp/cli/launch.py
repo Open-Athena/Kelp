@@ -50,8 +50,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_ENV_PASSTHROUGH = ("WANDB_API_KEY", "WANDB_ENTITY", "HF_TOKEN")
 
 # A GCP region token as it appears in a bucket name (us-east5, us-central2,
-# europe-west4, ...). Used to infer the compute region from the output bucket.
-_GCP_REGION_RE = re.compile(r"(?:us|europe|asia|northamerica|southamerica|australia|me|africa)-[a-z]+\d+")
+# europe-west4, asia-southeast1, ...). The middle segment must be a real GCP
+# cardinal direction, so an arbitrary hyphenated token (e.g. a bucket named
+# `...-us-team1-...`) is NOT mistaken for a region.
+_GCP_AREAS = "us|europe|asia|northamerica|southamerica|australia|me|africa"
+_GCP_DIRECTIONS = "central|east|west|north|south|northeast|northwest|southeast|southwest"
+_GCP_REGION_RE = re.compile(rf"(?:{_GCP_AREAS})-(?:{_GCP_DIRECTIONS})\d+")
+
+# GCS output/checkpoint flags whose bucket determines where the job should run.
+_GCS_OUTPUT_FLAGS = ("--output-dir", "--checkpoint-dir")
 
 
 def _gcs_bucket_after(passthrough_args: list[str], flag: str) -> str | None:
@@ -67,16 +74,27 @@ def _gcs_bucket_after(passthrough_args: list[str], flag: str) -> str | None:
     return None
 
 
+def gcs_output_bucket_from_args(passthrough_args: list[str]) -> str | None:
+    """First GCS output/checkpoint bucket in the args, whatever its name."""
+    for flag in _GCS_OUTPUT_FLAGS:
+        bucket = _gcs_bucket_after(passthrough_args, flag)
+        if bucket:
+            return bucket
+    return None
+
+
 def gcs_region_from_args(passthrough_args: list[str]) -> str | None:
     """Best-effort region of the job's GCS output/checkpoint bucket, parsed from
     the bucket name (e.g. ``gs://marin-us-east5/...`` -> ``us-east5``).
 
     Used to pin compute to the bucket's region so checkpoint writes stay
-    in-region -- cross-region GCS traffic bills as egress (see AGENTS.md). Returns
-    None when there is no ``gs://`` output arg or the bucket name carries no
-    region token, leaving placement unconstrained.
+    in-region -- cross-region GCS traffic bills as egress (see AGENTS.md). This is
+    a name heuristic (it assumes the bucket is named for its region, as Marin's
+    are); ``--region`` is the authoritative override. Returns None when there is
+    no ``gs://`` output arg or the bucket name carries no GCP region token,
+    leaving placement unconstrained (the caller warns).
     """
-    for flag in ("--output-dir", "--checkpoint-dir"):
+    for flag in _GCS_OUTPUT_FLAGS:
         bucket = _gcs_bucket_after(passthrough_args, flag)
         if bucket:
             match = _GCP_REGION_RE.search(bucket)
@@ -114,9 +132,10 @@ def build_job_request(
     entrypoint (``kelp.cli.train`` for training, ``kelp.cli.evaluate_mbpp`` for
     eval, ...). ``inject_preset`` passes ``--preset <name>`` to the module (the
     trainer reads it; eval modules take the config from the checkpoint, so they
-    set this False). Pure and side-effect-free (reads ``environ`` for env
-    passthrough, defaulting to ``os.environ``) so it can be unit-tested without
-    a cluster.
+    set this False). No cluster or network I/O -- it reads only ``environ`` (env
+    passthrough, defaulting to ``os.environ``) and the passthrough args, so it can
+    be unit-tested without a cluster. (It does emit a log line about region
+    pinning; the returned request is a pure function of the inputs.)
     """
     environ = environ if environ is not None else dict(os.environ)
     preset = get_preset(preset_name)
@@ -124,19 +143,24 @@ def build_job_request(
 
     # Pin the compute to the region of the GCS output/checkpoint bucket so
     # checkpoint writes stay in-region -- cross-region GCS traffic bills as egress
-    # (see AGENTS.md; vet-cond-v2 ran in us-east1 while its bucket was us-east5 and
-    # tripped a high-egress alert). Explicit ``region`` wins; otherwise it is
-    # inferred from the passthrough args. Only applies to a TPU slice that is not
-    # already region/zone-constrained (a preset that pins its own zone is honored).
+    # (see AGENTS.md; vet-cond-v2 ran outside us-east5 while its bucket was
+    # us-east5 and tripped a high-egress alert). Explicit ``region`` wins;
+    # otherwise it is inferred from the bucket name. Only applies to a TPU slice
+    # that isn't already region/zone-constrained (a preset that pins its own zone
+    # is honored). When a gs:// output bucket has no inferable region, warn rather
+    # than silently leave placement unconstrained.
     target_region = region or gcs_region_from_args(passthrough_args)
-    if (
-        target_region
-        and getattr(resources.device, "kind", None) == "tpu"
-        and resources.regions is None
-        and resources.zone is None
-    ):
-        resources = dataclasses.replace(resources, regions=[target_region])
-        logger.info("Pinned compute to region %s (matches GCS bucket; avoids cross-region egress).", target_region)
+    is_tpu = getattr(resources.device, "kind", None) == "tpu"
+    if is_tpu and resources.regions is None and resources.zone is None:
+        if target_region:
+            resources = dataclasses.replace(resources, regions=[target_region])
+            logger.info("Pinned compute to region %s (matches GCS bucket; avoids cross-region egress).", target_region)
+        elif (bucket := gcs_output_bucket_from_args(passthrough_args)) is not None:
+            logger.warning(
+                "Could not infer a region from GCS output bucket %r; compute placement is "
+                "unconstrained and MAY run cross-region (egress). Pass --region <r> to pin. See AGENTS.md.",
+                bucket,
+            )
 
     preset_flag = ["--preset", preset_name] if inject_preset else []
     command_args = ["-m", module, *preset_flag, *passthrough_args]

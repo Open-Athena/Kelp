@@ -13,8 +13,17 @@ def test_gcs_region_from_args_parses_bucket_region():
     assert gcs_region_from_args(["--output-dir", "gs://marin-us-east5/kelp/ck"]) == "us-east5"
     assert gcs_region_from_args(["--checkpoint-dir", "gs://marin-europe-west4/x"]) == "europe-west4"
     assert gcs_region_from_args(["--output-dir=gs://marin-us-central2/y"]) == "us-central2"
+    assert gcs_region_from_args(["--output-dir", "gs://acme-asia-southeast1-ckpts/z"]) == "asia-southeast1"
     assert gcs_region_from_args(["--steps", "50000"]) is None  # no gs:// output arg
     assert gcs_region_from_args(["--output-dir", "gs://plain-bucket/z"]) is None  # no region token
+
+
+def test_gcs_region_rejects_non_region_tokens():
+    """A hyphenated token that is not a real GCP region (wrong direction segment)
+    must NOT be mistaken for one -- else the job pins to a nonexistent region and
+    never schedules."""
+    assert gcs_region_from_args(["--output-dir", "gs://marin-us-team1-data/x"]) is None
+    assert gcs_region_from_args(["--output-dir", "gs://marin-me-data1/x"]) is None
 
 
 def test_pins_tpu_region_from_output_bucket():

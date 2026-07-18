@@ -33,9 +33,14 @@ Before launching any `kelp-launch` / `kelp-eval` job that touches GCS:
    TPU slice to it (`ResourceConfig.regions`), so checkpoint writes stay in-region
    on every placement *and* on preemption retries. The dry-run prints the pinned
    `regions:` line; a `Pinned compute to region …` log confirms it on submit.
-   Override with `kelp-launch --region <r>` if you must. The default bucket
-   `gs://marin-us-east5` is us-east5, where v6e is available in `us-east5-b`
-   (marin v6e zones: `europe-west4-a, us-east1-d, us-east5-b`).
+   Override with `kelp-launch --region <r>` (authoritative) if you must. The
+   inference is a **bucket-name heuristic** — it assumes the bucket is named for
+   its region, as Marin's are (`marin-us-east5` → us-east5), and validates the
+   region token's shape. If it can't infer a region from a `gs://` output bucket
+   it **warns and leaves placement unconstrained** (so watch for that warning, or
+   just pass `--region`). The default bucket `gs://marin-us-east5` is us-east5,
+   where v6e is available in `us-east5-b` (marin v6e zones: `europe-west4-a,
+   us-east1-d, us-east5-b`).
    - Caveat: pinning to one region can leave the job *pending* if that region is
      out of (preemptible) capacity. That's the right trade — wait for in-region
      capacity rather than silently pay inter-continental egress. Widen with
