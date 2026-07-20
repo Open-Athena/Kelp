@@ -44,6 +44,9 @@ from levanter.grug.attention import (
     AttentionMask,
 )
 from levanter.grug.attention import (
+    align_kv_heads as grug_align_kv_heads,
+)
+from levanter.grug.attention import (
     apply_rotary_embedding as grug_apply_rotary,
 )
 from levanter.grug.attention import (
@@ -238,6 +241,15 @@ def forward(
         )
 
         q, k = grug_apply_rotary(q, k, seq_len=seq_len, head_dim=head_dim, rope=cfg.rope)
+
+        if fused_attention and cfg.num_kv_heads != cfg.num_heads:
+            # The fused TPU splash kernel is MHA-only: it needs matching q/kv head
+            # counts. Grouped-query configs have fewer KV heads, so expand them to
+            # the query-head layout here. Reference attention (the dense path)
+            # does this internally, so the dense/CPU path leaves head counts as-is
+            # and this is a no-op for MHA (num_kv_heads == num_heads).
+            k = grug_align_kv_heads(k, num_q_heads=cfg.num_heads)
+            v = grug_align_kv_heads(v, num_q_heads=cfg.num_heads)
 
         # Causal attention with padding mask.
         attn_out = grug_attention(q, k, v, mask=attn_mask)

@@ -133,6 +133,25 @@ def test_fused_attention_matches_dense_at_real_positions(params, tiny_cfg):
     assert jnp.allclose(jnp.where(real, dense, 0.0), jnp.where(real, fused, 0.0), atol=1e-5)
 
 
+def test_fused_attention_handles_grouped_query_heads():
+    """With fewer KV heads than query heads (GQA), the fused path must expand the
+    grouped KV heads before attention -- the splash kernel is MHA-only and, unlike
+    reference attention, does not align them itself. On CPU both paths route to
+    reference (which aligns internally), so this checks the fused branch stays
+    shape-correct and numerically matches dense for a GQA config (the splash-only
+    failure it prevents is TPU-only and cannot be exercised here)."""
+    cfg = EditModelConfig(
+        vocab_size=128, hidden_dim=64, intermediate_dim=128, num_layers=2, num_heads=8, num_kv_heads=2, max_seq_len=128
+    )
+    params = init_edit_params(cfg, key=jax.random.PRNGKey(0))
+    token_ids = jax.random.randint(jax.random.PRNGKey(3), (1, 128), 1, 100)
+
+    dense = forward(params, token_ids, cfg, fused_attention=False)
+    fused = forward(params, token_ids, cfg, fused_attention=True)
+
+    assert jnp.allclose(dense, fused, atol=1e-5)
+
+
 def test_forward_padding_masked(params, tiny_cfg):
     """Padding tokens should not affect non-padding logits."""
     tokens = jnp.array([[10, 20, 30, 0, 0]])  # Last two are padding.
