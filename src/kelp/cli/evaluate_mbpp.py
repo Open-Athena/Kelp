@@ -38,8 +38,10 @@ import ast
 import json
 import logging
 import random
+import signal
 import sys
 import time
+from contextlib import contextmanager
 
 import jax
 from etils import epath
@@ -103,16 +105,59 @@ def load_mbpp_eval_tasks(max_length: int = 512, max_tasks: int = 0) -> list[dict
     return tasks
 
 
-def run_mbpp_test(program: str, test_assert: str, setup_code: str = "") -> bool:
-    """Execute an MBPP assert-based test case against a program."""
+class _TestTimeout(Exception):
+    """Raised when a generated candidate exceeds the per-test wall-clock limit."""
+
+
+@contextmanager
+def _time_limit(seconds: float):
+    """Best-effort wall-clock limit for executing generated code.
+
+    Guards against a non-terminating candidate (e.g. ``while True``) hanging the
+    whole eval -- exactly the vet-cond-v2 failure where one task's runaway
+    candidate stalled the run and 17/50 tasks were lost. Uses SIGALRM, which is
+    main-thread + Unix only; off the main thread (or if unavailable) it degrades
+    to no limit rather than erroring. A C-level busy loop can still ignore the
+    signal, but model-generated MBPP code is pure Python and interruptible.
+    """
+    if seconds <= 0:
+        yield
+        return
+
+    def _handler(signum, frame):
+        raise _TestTimeout()
+
+    try:
+        old = signal.signal(signal.SIGALRM, _handler)
+    except ValueError:
+        # Not the main thread -> cannot arm SIGALRM; run without a limit.
+        yield
+        return
+
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def run_mbpp_test(program: str, test_assert: str, setup_code: str = "", timeout_s: float = 5.0) -> bool:
+    """Execute an MBPP assert-based test case against a program.
+
+    ``timeout_s`` bounds execution so a non-terminating candidate fails the test
+    instead of hanging the eval (0 disables the limit). See :func:`_time_limit`.
+    """
     try:
         namespace: dict = {}
-        if setup_code:
-            exec(setup_code, namespace)
-        exec(program, namespace)
-        exec(test_assert, namespace)
+        with _time_limit(timeout_s):
+            if setup_code:
+                exec(setup_code, namespace)
+            exec(program, namespace)
+            exec(test_assert, namespace)
         return True
     except Exception:
+        # Includes _TestTimeout (a non-terminating candidate) -> a failed test.
         return False
 
 
@@ -130,6 +175,7 @@ def evaluate_mbpp_task(
     n_best_of: int = 16,
     max_depth: int = 10,
     constrain_position: bool = False,
+    test_timeout: float = 5.0,
 ) -> dict:
     """Evaluate a single MBPP task across multiple corruption/repair trials.
 
@@ -196,7 +242,7 @@ def evaluate_mbpp_task(
             best_trial_pass_rate = 0.0
             best_trial_candidate = candidates[0].source
             for c in candidates:
-                c_passed = sum(1 for t in tests if run_mbpp_test(c.source, t, setup_code))
+                c_passed = sum(1 for t in tests if run_mbpp_test(c.source, t, setup_code, timeout_s=test_timeout))
                 c_rate = c_passed / len(tests) if tests else 0.0
                 if c_rate > best_trial_pass_rate:
                     best_trial_pass_rate = c_rate
@@ -271,6 +317,13 @@ def parse_args() -> argparse.Namespace:
         "correct: the model's position CHOICE, not validity, is the bottleneck. Research toggle.",
     )
     parser.add_argument("--max-tasks", type=int, default=50, help="Max MBPP tasks to evaluate (0=all)")
+    parser.add_argument(
+        "--test-timeout",
+        type=float,
+        default=5.0,
+        help="Per-test wall-clock limit (seconds) for executing a generated candidate; a "
+        "non-terminating candidate fails the test instead of hanging the eval (0 disables).",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--output", type=str, default=None, help="Output JSON file for results")
     parser.add_argument(
@@ -344,6 +397,7 @@ def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
             "max_depth": args.max_depth,
             "corpus_file": args.corpus_file,
             "constrain_position": args.constrain_position,
+            "test_timeout": args.test_timeout,
         }
     )
 
@@ -435,6 +489,7 @@ def main():
             n_best_of=args.n_best_of,
             max_depth=args.max_depth,
             constrain_position=args.constrain_position,
+            test_timeout=args.test_timeout,
         )
         write_result(tasks_dir, result, "task_id")
         completed[tid] = result
@@ -504,6 +559,7 @@ def main():
             "max_depth": args.max_depth,
             "max_tasks": args.max_tasks,
             "corpus_file": args.corpus_file,
+            "test_timeout": args.test_timeout,
         },
         "aggregate": {
             "tasks_evaluated": len(tasks_with_trials),
