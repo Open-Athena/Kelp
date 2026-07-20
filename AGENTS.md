@@ -53,6 +53,26 @@ Before launching any `kelp-launch` / `kelp-eval` job that touches GCS:
    in the *compute's* region and copy only the FINAL checkpoint cross-region with
    a single `gsutil cp` — never one transfer per checkpoint interval.
 
+## Scheduling: jobs default to the BATCH priority band
+
+`kelp-launch` / `kelp-eval` submit in Iris's **BATCH** band (`priority_band=3`)
+by default. Bands are `PRODUCTION(1) > INTERACTIVE(2) > BATCH(3)` (lower number =
+higher priority; the scheduler orders by band ascending, and preemption can only
+evict strictly-lower-priority work). BATCH is right for kelp jobs because they
+are long, non-interactive, already preemptible (`max_retries_preemption=20`) and
+resume from checkpoints -- they should yield capacity to interactive/production
+work rather than compete with it. It also avoids a budget-cliff churn: an
+over-budget INTERACTIVE job is downgraded to BATCH mid-run and can oscillate back
+(Iris `compute_effective_band`); starting at BATCH sidesteps that.
+
+- The dry-run prints `priority : batch (band 3)`.
+- Override with `kelp-launch --priority-band interactive` for a **short** job you
+  are actively waiting on. Don't use `interactive`/`production` for long training
+  runs -- that competes with real interactive work for scarce TPU capacity.
+- Trade-off: a BATCH job can wait longer for capacity and is preempted first.
+  That is fine here (checkpointed + resumable + region-pinned); if a run keeps
+  getting preempted, check capacity before reaching for a higher band.
+
 ## Minimize checkpoint volume
 
 Egress and storage both scale with (checkpoint size × count). A ~115M-param

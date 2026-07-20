@@ -17,13 +17,15 @@
 
 """Tests for the AR edit-prediction model."""
 
+from dataclasses import replace
+
 import jax
 import jax.numpy as jnp
 import pytest
 
 from kelp.model.config import EditModelConfig
 from kelp.model.edit_model import (
-    _make_causal_mask,
+    _to_compute_dtype,
     ar_loss,
     forward,
     init_edit_params,
@@ -79,19 +81,6 @@ def test_init_params_block_shapes(params, tiny_cfg):
     assert block.rms_mlp.shape == (D,)
 
 
-def test_causal_mask():
-    mask = _make_causal_mask(4)
-    expected = jnp.array(
-        [
-            [True, False, False, False],
-            [True, True, False, False],
-            [True, True, True, False],
-            [True, True, True, True],
-        ]
-    )
-    assert jnp.array_equal(mask, expected)
-
-
 def test_forward_output_shape(params, tiny_cfg):
     batch_size, seq_len = 2, 16
     token_ids = jax.random.randint(jax.random.PRNGKey(1), (batch_size, seq_len), 1, 100)
@@ -123,6 +112,44 @@ def test_forward_is_causal(params, tiny_cfg):
     assert jnp.allclose(logits_a[0, :-1], logits_b[0, :-1], atol=1e-5)
     # The last position should differ.
     assert not jnp.allclose(logits_a[0, -1], logits_b[0, -1], atol=1e-5)
+
+
+def test_fused_attention_matches_dense_at_real_positions(params, tiny_cfg):
+    """The fused (AttentionMask/splash) path must be numerically identical to the
+    dense reference path at every real (non-pad) position -- that equivalence is
+    the whole safety case for swapping in the fused kernel. seq_len is a multiple
+    of 128 so the same mask form is valid on TPU; on CPU both route to reference
+    attention, which is exactly what makes this comparison meaningful."""
+    seq_len = 128
+    token_ids = jax.random.randint(jax.random.PRNGKey(3), (2, seq_len), 1, 100)
+    # Mark the tail of row 0 as padding so the padding-segment logic is exercised.
+    token_ids = token_ids.at[0, 100:].set(tiny_cfg.pad_token_id)
+    not_pad = token_ids != tiny_cfg.pad_token_id
+
+    dense = forward(params, token_ids, tiny_cfg, fused_attention=False)
+    fused = forward(params, token_ids, tiny_cfg, fused_attention=True)
+
+    real = not_pad[:, :, None]
+    assert jnp.allclose(jnp.where(real, dense, 0.0), jnp.where(real, fused, 0.0), atol=1e-5)
+
+
+def test_fused_attention_handles_grouped_query_heads():
+    """With fewer KV heads than query heads (GQA), the fused path must expand the
+    grouped KV heads before attention -- the splash kernel is MHA-only and, unlike
+    reference attention, does not align them itself. On CPU both paths route to
+    reference (which aligns internally), so this checks the fused branch stays
+    shape-correct and numerically matches dense for a GQA config (the splash-only
+    failure it prevents is TPU-only and cannot be exercised here)."""
+    cfg = EditModelConfig(
+        vocab_size=128, hidden_dim=64, intermediate_dim=128, num_layers=2, num_heads=8, num_kv_heads=2, max_seq_len=128
+    )
+    params = init_edit_params(cfg, key=jax.random.PRNGKey(0))
+    token_ids = jax.random.randint(jax.random.PRNGKey(3), (1, 128), 1, 100)
+
+    dense = forward(params, token_ids, cfg, fused_attention=False)
+    fused = forward(params, token_ids, cfg, fused_attention=True)
+
+    assert jnp.allclose(dense, fused, atol=1e-5)
 
 
 def test_forward_padding_masked(params, tiny_cfg):
@@ -185,3 +212,29 @@ def test_ar_loss_grad_flows(params, tiny_cfg):
     # Check that gradients are non-zero for at least some params.
     grad_norm = jnp.sqrt(sum(jnp.sum(g**2) for g in jax.tree.leaves(grads)))
     assert float(grad_norm) > 0
+
+
+def test_float32_compute_dtype_is_noop_cast(params, tiny_cfg):
+    """The default float32 path must be byte-for-byte unchanged: casting to the
+    compute dtype returns the params object untouched (no spurious copies/casts)."""
+    assert tiny_cfg.compute_dtype == "float32"
+    assert _to_compute_dtype(params, jnp.float32) is params
+
+
+def test_bf16_compute_keeps_logits_and_master_grads_float32(tiny_cfg):
+    """Mixed-precision contract: with bf16 compute the matmul weights run in bf16,
+    but the output logits stay float32 (stability) and gradients land on the
+    float32 master weights (the optimizer never sees bf16)."""
+    cfg = replace(tiny_cfg, compute_dtype="bfloat16")
+    params = init_edit_params(cfg, key=jax.random.PRNGKey(0))
+    assert params.blocks[0].attn.w_q.dtype == jnp.float32  # master weights fp32
+
+    token_ids = jax.random.randint(jax.random.PRNGKey(1), (1, 8), 1, 100)
+    loss_mask = jnp.ones((1, 8))
+
+    logits = forward(params, token_ids, cfg)
+    assert logits.dtype == jnp.float32
+
+    grads = jax.grad(lambda p: ar_loss(p, token_ids, loss_mask, cfg)[0])(params)
+    assert grads.blocks[0].attn.w_q.dtype == jnp.float32
+    assert grads.blocks[0].mlp_down.dtype == jnp.float32

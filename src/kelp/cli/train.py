@@ -63,6 +63,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=1000, help="Number of training steps")
     parser.add_argument("--lr", type=float, default=None, help="Learning rate (uses preset default if not set)")
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size (uses preset default if not set)")
+    parser.add_argument(
+        "--compute-dtype",
+        type=str,
+        default=None,
+        choices=["float32", "bfloat16"],
+        help="Matmul compute dtype (uses preset default if not set). 'bfloat16' runs "
+        "bf16 matmuls on the MXU (~2-4x throughput, half the activation memory); "
+        "sensitive reductions (rmsnorm, logits) stay float32. Master weights stay float32.",
+    )
+    parser.add_argument(
+        "--max-seq-len",
+        type=int,
+        default=None,
+        help="Override the preset's max sequence length. Right-sizing to just above "
+        "the corpus's token-length p99 cuts O(seq^2) attention and padding waste. "
+        "Truncates examples longer than this, so check the corpus length distribution first. "
+        "MUST be a multiple of 128 on TPU: training uses the fused splash-attention kernel, "
+        "which requires it (e.g. 512, 768, 896, 1024).",
+    )
     parser.add_argument("--output-dir", type=str, default="checkpoints/kelp-edit", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--log-interval", type=int, default=10, help="Steps between logging")
@@ -184,8 +203,25 @@ def main():
     model_config = preset.config
     if args.prompt_conditioning:
         model_config = replace(model_config, prompt_tokens=True)
+    if args.compute_dtype is not None:
+        model_config = replace(model_config, compute_dtype=args.compute_dtype)
+    if args.max_seq_len is not None:
+        model_config = replace(model_config, max_seq_len=args.max_seq_len)
     lr = args.lr or preset.learning_rate
     batch_size = args.batch_size or preset.batch_size
+
+    # Training uses the fused splash-attention kernel, which requires the sequence
+    # length to be a multiple of 128 on TPU (CPU/GPU take the reference path and
+    # are unaffected). Fail fast with a clear message instead of an opaque splash
+    # NotImplementedError mid-run. Presets are all multiples of 128; only a
+    # --max-seq-len override can trip this.
+    import jax
+
+    if jax.default_backend() == "tpu" and model_config.max_seq_len % 128 != 0:
+        raise SystemExit(
+            f"--max-seq-len={model_config.max_seq_len} must be a multiple of 128 for TPU training "
+            "(the fused splash-attention kernel requires it). Use e.g. 512, 768, 896, or 1024."
+        )
 
     # Load corpus.
     if args.corpus_file:

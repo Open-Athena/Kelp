@@ -185,11 +185,17 @@ def tpu_vet_preset() -> ModelPreset:
             num_heads=12,
             num_kv_heads=12,
             max_seq_len=1024,
+            # bf16 matmuls on the MXU: ~2-4x throughput and ~half the activation
+            # memory vs float32, with sensitive reductions (rmsnorm, logits) kept
+            # in float32. This is the biggest MFU lever (issue #132); float32 at
+            # these dims measured ~3.5% MFU. Override with --compute-dtype.
+            compute_dtype="bfloat16",
         ),
         resource=ResourceConfig.with_tpu("v6e-4"),
-        # 64 global (16/chip) fits the v6e-4's ~31GB HBM/chip in float32 at
-        # seq 1024; batch 256 OOMs (~57GB of step temporaries). Raise once
-        # bf16 compute / gradient checkpointing land (see #130-adjacent).
+        # 64 global (16/chip). This fit the v6e-4's ~31GB HBM/chip even in
+        # float32 at seq 1024; bf16 halves activation memory, so there is now
+        # headroom to raise this (issue #132 lever 3) -- do so with --batch-size
+        # after confirming HBM use, rather than baking a larger default in blind.
         batch_size=64,
         learning_rate=3e-4,
         description="~115M model on v6e-4 for cheap data-scaling experiments",

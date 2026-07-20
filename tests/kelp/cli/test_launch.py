@@ -3,6 +3,8 @@
 
 """Tests for the Iris launch entrypoint (build side; no live cluster)."""
 
+import pytest
+
 from kelp.cli.launch import build_job_request, format_dry_run, gcs_region_from_args
 from kelp.training.presets import get_preset
 
@@ -55,6 +57,28 @@ def test_no_region_pin_without_region_token():
     preset's resource is untouched)."""
     req = build_job_request("tpu_vet", ["--output-dir", "gs://plain/x"], name="kelp-test", environ={})
     assert req.resources.regions is None
+
+
+def test_defaults_to_batch_priority_band():
+    """Kelp jobs are long, preemptible and checkpointed, so they submit in the
+    BATCH band (Iris priority_band 3) by default -- yielding capacity to
+    interactive/production work rather than competing with it."""
+    req = build_job_request("tpu_vet", ["--output-dir", "gs://marin-us-east5/kelp/x"], name="k", environ={})
+    assert req.priority == 3
+
+
+def test_priority_band_override_and_validation():
+    """An explicit band overrides the batch default; an unknown band is rejected
+    up front (rather than submitting a job with a bogus priority)."""
+    req = build_job_request("tpu_vet", [], name="k", priority_band="interactive", environ={})
+    assert req.priority == 2
+    with pytest.raises(ValueError, match="Unknown priority_band"):
+        build_job_request("tpu_vet", [], name="k", priority_band="urgent", environ={})
+
+
+def test_dry_run_summary_shows_priority_band():
+    req = build_job_request("tpu_vet", [], name="k", environ={})
+    assert "priority    : batch (band 3)" in format_dry_run(req, "tpu_vet")
 
 
 def test_job_request_carries_preset_resources_and_command():

@@ -60,6 +60,30 @@ _GCP_REGION_RE = re.compile(rf"(?:{_GCP_AREAS})-(?:{_GCP_DIRECTIONS})\d+")
 # GCS output/checkpoint flags whose bucket determines where the job should run.
 _GCS_OUTPUT_FLAGS = ("--output-dir", "--checkpoint-dir")
 
+# Iris scheduling priority bands, mirroring iris.rpc.job_pb2.PriorityBand wire
+# values. Kept as plain ints so this module needs no iris import at load time
+# (iris is imported lazily only at submit; see _submit_or_dry_run) -- fray
+# forwards JobRequest.priority straight through as Iris's priority_band. Lower
+# number = higher priority: PRODUCTION(1) beats INTERACTIVE(2) beats BATCH(3),
+# and preemption can only evict strictly-lower-priority work.
+#
+# We default to BATCH: kelp training/eval jobs are long, non-interactive, already
+# preemptible (max_retries_preemption below) and resume from checkpoints, so they
+# should yield capacity to interactive/production work rather than compete with
+# it. BATCH also avoids the budget-cliff churn where an over-budget INTERACTIVE
+# job is downgraded to BATCH mid-run and can oscillate back (Iris
+# compute_effective_band). Override with --priority-band interactive.
+_PRIORITY_BANDS = {"production": 1, "interactive": 2, "batch": 3}
+_DEFAULT_PRIORITY_BAND = "batch"
+
+
+def _band_name(band: int) -> str:
+    """Human-readable name for a priority-band int (for the dry-run summary)."""
+    for name, value in _PRIORITY_BANDS.items():
+        if value == band:
+            return name
+    return "unspecified" if band == 0 else f"band-{band}"
+
 
 def _gcs_bucket_after(passthrough_args: list[str], flag: str) -> str | None:
     """Bucket name from a ``<flag> gs://bucket/...`` (or ``<flag>=gs://...``) arg."""
@@ -124,6 +148,7 @@ def build_job_request(
     env_names: tuple[str, ...] = DEFAULT_ENV_PASSTHROUGH,
     replicas: int | None = None,
     region: str | None = None,
+    priority_band: str = _DEFAULT_PRIORITY_BAND,
     environ: dict[str, str] | None = None,
 ) -> JobRequest:
     """Build a fray JobRequest that runs a Kelp module under a preset's resources.
@@ -132,11 +157,15 @@ def build_job_request(
     entrypoint (``kelp.cli.train`` for training, ``kelp.cli.evaluate_mbpp`` for
     eval, ...). ``inject_preset`` passes ``--preset <name>`` to the module (the
     trainer reads it; eval modules take the config from the checkpoint, so they
-    set this False). No cluster or network I/O -- it reads only ``environ`` (env
-    passthrough, defaulting to ``os.environ``) and the passthrough args, so it can
-    be unit-tested without a cluster. (It does emit a log line about region
-    pinning; the returned request is a pure function of the inputs.)
+    set this False). ``priority_band`` selects the Iris scheduling band
+    (``batch`` by default -- see ``_PRIORITY_BANDS``). No cluster or network I/O
+    -- it reads only ``environ`` (env passthrough, defaulting to ``os.environ``)
+    and the passthrough args, so it can be unit-tested without a cluster. (It does
+    emit a log line about region pinning; the returned request is a pure function
+    of the inputs.)
     """
+    if priority_band not in _PRIORITY_BANDS:
+        raise ValueError(f"Unknown priority_band {priority_band!r}; choose one of {sorted(_PRIORITY_BANDS)}.")
     environ = environ if environ is not None else dict(os.environ)
     preset = get_preset(preset_name)
     resources = preset.resource
@@ -195,6 +224,7 @@ def build_job_request(
         replicas=replicas if replicas is not None else resources.replicas,
         max_retries_preemption=20,
         max_retries_failure=2,
+        priority=_PRIORITY_BANDS[priority_band],
     )
 
 
@@ -216,6 +246,7 @@ def format_dry_run(request: JobRequest, preset_name: str) -> str:
         f"  job name    : {request.name}",
         f"  preset      : {preset_name}",
         f"  accelerator : {_device_summary(resources)}  (cpu={resources.cpu}, ram={resources.ram})",
+        f"  priority    : {_band_name(request.priority)} (band {request.priority})",
         f"  regions     : {resources.regions or '(scheduler default -- may be cross-region from bucket!)'}",
         f"  replicas    : {request.replicas if request.replicas is not None else resources.replicas}",
         f"  code        : {source}",
@@ -255,6 +286,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "checkpoints stay in-region and avoid cross-region egress. See AGENTS.md.",
     )
     parser.add_argument(
+        "--priority-band",
+        type=str,
+        default=_DEFAULT_PRIORITY_BAND,
+        choices=list(_PRIORITY_BANDS),
+        help="Iris scheduling band (default: batch). 'batch' yields capacity to interactive/"
+        "production work and is right for long, preemptible, checkpointed runs; use 'interactive' "
+        "for a short job you are actively waiting on.",
+    )
+    parser.add_argument(
         "--cluster",
         type=str,
         default="marin",
@@ -290,6 +330,7 @@ def main(argv: list[str] | None = None) -> None:
         env_names=env_names,
         replicas=args.replicas,
         region=args.region,
+        priority_band=args.priority_band,
     )
     _submit_or_dry_run(request, args.preset, submit=args.submit, cluster=args.cluster, name=name)
 
@@ -349,6 +390,13 @@ def parse_eval_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Pin compute to this GCS region (default: inferred from the --checkpoint-dir bucket) so "
         "the job runs in-region and avoids cross-region egress. See AGENTS.md.",
     )
+    parser.add_argument(
+        "--priority-band",
+        type=str,
+        default=_DEFAULT_PRIORITY_BAND,
+        choices=list(_PRIORITY_BANDS),
+        help="Iris scheduling band (default: batch). Use 'interactive' for a short eval you are actively waiting on.",
+    )
     parser.add_argument("--cluster", type=str, default="marin", help="Iris cluster (default: marin).")
     parser.add_argument("--submit", action="store_true", help="Actually submit (default: dry run).")
     parser.add_argument(
@@ -378,6 +426,7 @@ def eval_main(argv: list[str] | None = None) -> None:
         env_names=env_names,
         replicas=args.replicas,
         region=args.region,
+        priority_band=args.priority_band,
     )
     _submit_or_dry_run(request, args.preset, submit=args.submit, cluster=args.cluster, name=name)
 
