@@ -522,9 +522,7 @@ def train_edit_model(
 
             if config.output_dir and config.checkpoint_interval > 0 and (step + 1) % config.checkpoint_interval == 0:
                 ckpt_dir = epath.Path(config.output_dir) / f"step-{step + 1:06d}"
-                save_training_checkpoint(
-                    state.params, state.opt_state, state.step, state.key, config.model, ckpt_dir
-                )
+                save_training_checkpoint(state.params, state.opt_state, state.step, state.key, config.model, ckpt_dir)
 
     # Save final checkpoint (resumable, like the interval checkpoints).
     if config.output_dir:

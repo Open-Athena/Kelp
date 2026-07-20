@@ -395,8 +395,7 @@ def parse_eval_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=str,
         default=_DEFAULT_PRIORITY_BAND,
         choices=list(_PRIORITY_BANDS),
-        help="Iris scheduling band (default: batch). Use 'interactive' for a short eval you are "
-        "actively waiting on.",
+        help="Iris scheduling band (default: batch). Use 'interactive' for a short eval you are actively waiting on.",
     )
     parser.add_argument("--cluster", type=str, default="marin", help="Iris cluster (default: marin).")
     parser.add_argument("--submit", action="store_true", help="Actually submit (default: dry run).")
