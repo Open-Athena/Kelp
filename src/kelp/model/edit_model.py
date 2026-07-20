@@ -30,6 +30,7 @@ The transformer backbone (blocks, attention, MLP, norms, RoPE) is identical
 to Grug and can be initialized directly from pretrained LLM weights.
 """
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 
@@ -124,6 +125,43 @@ def init_edit_params(cfg: EditModelConfig, *, key: PRNGKeyArray) -> EditModelPar
     )
 
 
+def _to_compute_dtype(params: EditModelParams, dtype: jnp.dtype) -> EditModelParams:
+    """Cast the matmul weights (attention + MLP projections) to ``dtype``.
+
+    This is the mechanism that makes ``compute_dtype='bfloat16'`` actually run
+    bf16 matmuls: the master weights stay float32 (the optimizer needs them), but
+    the forward/backward matmul *operands* are cast here. Without this, a bf16
+    activation times an fp32 weight promotes back to fp32 (JAX's type-promotion
+    lattice), so the MXU never sees a bf16xbf16 matmul and the flag is a no-op.
+
+    Normalization weights and the output projection are deliberately left in
+    float32 -- ``rms_norm`` accumulates in float32 and the vocab logits stay
+    float32 for numerical stability (both are a negligible share of FLOPs). When
+    ``dtype`` is float32 every cast is an identity XLA elides, so the float32
+    path is byte-for-byte unchanged. Gradients flow back through the casts to the
+    float32 master weights (the cast's transpose upcasts them).
+    """
+    if dtype == jnp.float32:
+        return params
+
+    def cast_block(b: TransformerBlockParams) -> TransformerBlockParams:
+        return TransformerBlockParams(
+            attn=AttentionParams(
+                w_q=b.attn.w_q.astype(dtype),
+                w_k=b.attn.w_k.astype(dtype),
+                w_v=b.attn.w_v.astype(dtype),
+                w_o=b.attn.w_o.astype(dtype),
+            ),
+            rms_attn=b.rms_attn,
+            rms_mlp=b.rms_mlp,
+            mlp_gate=b.mlp_gate.astype(dtype),
+            mlp_up=b.mlp_up.astype(dtype),
+            mlp_down=b.mlp_down.astype(dtype),
+        )
+
+    return dataclasses.replace(params, blocks=tuple(cast_block(b) for b in params.blocks))
+
+
 def _make_causal_mask(seq_len: int) -> Float[Array, "S S"]:
     """Create a causal attention mask.
 
@@ -154,6 +192,10 @@ def forward(
     head_dim = cfg.head_dim
     _batch_size, seq_len = token_ids.shape
 
+    # Cast matmul weights to the compute dtype so the MXU sees genuine
+    # bf16xbf16 matmuls (see _to_compute_dtype). No-op when compute_dtype is
+    # float32.
+    params = _to_compute_dtype(params, compute_dtype)
     hidden = params.token_embed[token_ids].astype(compute_dtype)
 
     # Causal mask: position i can attend to 0..i. Combined with padding.

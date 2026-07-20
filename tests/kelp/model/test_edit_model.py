@@ -17,6 +17,8 @@
 
 """Tests for the AR edit-prediction model."""
 
+from dataclasses import replace
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -24,6 +26,7 @@ import pytest
 from kelp.model.config import EditModelConfig
 from kelp.model.edit_model import (
     _make_causal_mask,
+    _to_compute_dtype,
     ar_loss,
     forward,
     init_edit_params,
@@ -185,3 +188,29 @@ def test_ar_loss_grad_flows(params, tiny_cfg):
     # Check that gradients are non-zero for at least some params.
     grad_norm = jnp.sqrt(sum(jnp.sum(g**2) for g in jax.tree.leaves(grads)))
     assert float(grad_norm) > 0
+
+
+def test_float32_compute_dtype_is_noop_cast(params, tiny_cfg):
+    """The default float32 path must be byte-for-byte unchanged: casting to the
+    compute dtype returns the params object untouched (no spurious copies/casts)."""
+    assert tiny_cfg.compute_dtype == "float32"
+    assert _to_compute_dtype(params, jnp.float32) is params
+
+
+def test_bf16_compute_keeps_logits_and_master_grads_float32(tiny_cfg):
+    """Mixed-precision contract: with bf16 compute the matmul weights run in bf16,
+    but the output logits stay float32 (stability) and gradients land on the
+    float32 master weights (the optimizer never sees bf16)."""
+    cfg = replace(tiny_cfg, compute_dtype="bfloat16")
+    params = init_edit_params(cfg, key=jax.random.PRNGKey(0))
+    assert params.blocks[0].attn.w_q.dtype == jnp.float32  # master weights fp32
+
+    token_ids = jax.random.randint(jax.random.PRNGKey(1), (1, 8), 1, 100)
+    loss_mask = jnp.ones((1, 8))
+
+    logits = forward(params, token_ids, cfg)
+    assert logits.dtype == jnp.float32
+
+    grads = jax.grad(lambda p: ar_loss(p, token_ids, loss_mask, cfg)[0])(params)
+    assert grads.blocks[0].attn.w_q.dtype == jnp.float32
+    assert grads.blocks[0].mlp_down.dtype == jnp.float32

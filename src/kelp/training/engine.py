@@ -28,6 +28,7 @@ import logging
 import math
 import os
 import random as pyrandom
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -58,6 +59,11 @@ from kelp.training.sharding import (
     make_data_parallel_mesh,
     replicate,
     shard_batch,
+)
+from kelp.training.throughput import (
+    ThroughputTracker,
+    count_params,
+    device_peak_flops,
 )
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
@@ -461,6 +467,24 @@ def train_edit_model(
 
     train_step = make_edit_train_step(config.model, optimizer)
 
+    # MFU / throughput accounting. Peak is the chip's bf16 FLOP/s; unknown
+    # hardware (e.g. CPU/CI) yields None and we log throughput without MFU.
+    peak = device_peak_flops(jax.devices()[0].device_kind)
+    tracker = ThroughputTracker(
+        param_count=count_params(state.params),
+        tokens_per_step=config.batch_size * config.max_seq_len,
+        num_devices=dp_size,
+        peak_flops_per_device=peak,
+    )
+    logger.info(
+        f"Throughput accounting: N={tracker.param_count:,} params, "
+        f"{tracker.tokens_per_step:,} tokens/step, {dp_size} device(s), "
+        f"peak={'%.0f TFLOP/s/chip' % (peak / 1e12) if peak else 'unknown (no MFU)'}"
+    )
+    # Baselined on the first log so compilation time is excluded from throughput.
+    last_log_time: float | None = None
+    last_log_step = start_step
+
     logger.info(f"Starting edit model training: steps {start_step}..{config.total_steps}")
 
     for step in range(start_step, config.total_steps):
@@ -468,14 +492,24 @@ def train_edit_model(
         state, metrics = train_step(state, batch)
 
         if step % config.log_interval == 0:
+            # _log_edit_metrics reads float(loss), which blocks on this step's
+            # async dispatch -- so the clock below reflects real completion.
             _log_edit_metrics(step, metrics)
+            now = time.perf_counter()
+            perf: dict[str, float] = {}
+            if last_log_time is not None and step > last_log_step:
+                perf = tracker.metrics(now - last_log_time, step - last_log_step)
+                if perf:
+                    _log_throughput(step, perf)
+            last_log_time, last_log_step = now, step
+
             if wandb_run is not None:
                 wandb_run.log(
-                    {k: float(v) for k, v in metrics.items()},
+                    {**{k: float(v) for k, v in metrics.items()}, **perf},
                     step=step,
                 )
             if log_callback is not None:
-                log_callback(step, metrics)
+                log_callback(step, {**metrics, **perf})
 
         if config.output_dir and config.checkpoint_interval > 0 and (step + 1) % config.checkpoint_interval == 0:
             ckpt_dir = epath.Path(config.output_dir) / f"step-{step + 1:06d}"
@@ -517,3 +551,15 @@ def _log_edit_metrics(step: int, metrics: dict) -> None:
         f"step={step:06d} loss={loss:.4f} acc={acc:.4f} "
         f"ppl={ppl:.2f} grad_norm={grad_norm:.4f} loss_tokens={num_tokens:.0f}"
     )
+
+
+def _log_throughput(step: int, perf: dict) -> None:
+    """Log throughput / MFU for the interval ending at ``step``."""
+    parts = [
+        f"steps/s={perf['perf/steps_per_s']:.2f}",
+        f"tok/s={perf['perf/tokens_per_s']:,.0f}",
+        f"TFLOP/s/chip={perf['perf/tflops_per_device']:.1f}",
+    ]
+    if "perf/mfu" in perf:
+        parts.append(f"MFU={perf['perf/mfu'] * 100:.1f}%")
+    logger.info(f"step={step:06d} " + " ".join(parts))
