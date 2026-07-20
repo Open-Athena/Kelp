@@ -25,7 +25,6 @@ import pytest
 
 from kelp.model.config import EditModelConfig
 from kelp.model.edit_model import (
-    _make_causal_mask,
     _to_compute_dtype,
     ar_loss,
     forward,
@@ -82,19 +81,6 @@ def test_init_params_block_shapes(params, tiny_cfg):
     assert block.rms_mlp.shape == (D,)
 
 
-def test_causal_mask():
-    mask = _make_causal_mask(4)
-    expected = jnp.array(
-        [
-            [True, False, False, False],
-            [True, True, False, False],
-            [True, True, True, False],
-            [True, True, True, True],
-        ]
-    )
-    assert jnp.array_equal(mask, expected)
-
-
 def test_forward_output_shape(params, tiny_cfg):
     batch_size, seq_len = 2, 16
     token_ids = jax.random.randint(jax.random.PRNGKey(1), (batch_size, seq_len), 1, 100)
@@ -126,6 +112,25 @@ def test_forward_is_causal(params, tiny_cfg):
     assert jnp.allclose(logits_a[0, :-1], logits_b[0, :-1], atol=1e-5)
     # The last position should differ.
     assert not jnp.allclose(logits_a[0, -1], logits_b[0, -1], atol=1e-5)
+
+
+def test_fused_attention_matches_dense_at_real_positions(params, tiny_cfg):
+    """The fused (AttentionMask/splash) path must be numerically identical to the
+    dense reference path at every real (non-pad) position -- that equivalence is
+    the whole safety case for swapping in the fused kernel. seq_len is a multiple
+    of 128 so the same mask form is valid on TPU; on CPU both route to reference
+    attention, which is exactly what makes this comparison meaningful."""
+    seq_len = 128
+    token_ids = jax.random.randint(jax.random.PRNGKey(3), (2, seq_len), 1, 100)
+    # Mark the tail of row 0 as padding so the padding-segment logic is exercised.
+    token_ids = token_ids.at[0, 100:].set(tiny_cfg.pad_token_id)
+    not_pad = token_ids != tiny_cfg.pad_token_id
+
+    dense = forward(params, token_ids, tiny_cfg, fused_attention=False)
+    fused = forward(params, token_ids, tiny_cfg, fused_attention=True)
+
+    real = not_pad[:, :, None]
+    assert jnp.allclose(jnp.where(real, dense, 0.0), jnp.where(real, fused, 0.0), atol=1e-5)
 
 
 def test_forward_padding_masked(params, tiny_cfg):

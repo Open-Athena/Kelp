@@ -248,7 +248,10 @@ def make_edit_train_step(
     """Create a JIT-compiled training step for the AR edit model."""
 
     def loss_fn(params, token_ids, loss_mask):
-        return ar_loss(params, token_ids, loss_mask, config)
+        # Training opts into the fused splash-attention path (fixed seq length,
+        # under a mesh context -- see train_edit_model). Inference keeps the
+        # default dense/reference path.
+        return ar_loss(params, token_ids, loss_mask, config, fused_attention=True)
 
     def train_step(
         state: EditTrainingState,
@@ -487,33 +490,41 @@ def train_edit_model(
 
     logger.info(f"Starting edit model training: steps {start_step}..{config.total_steps}")
 
-    for step in range(start_step, config.total_steps):
-        batch = shard_batch(next(data_iter), mesh)
-        state, metrics = train_step(state, batch)
+    # Run the step calls under the mesh context so the fused TPU splash-attention
+    # kernel can resolve the device mesh (it reads the abstract mesh via
+    # haliax._get_mesh; without an active context it raises "requires a JAX mesh
+    # context" and attention silently loses the fused path). No-op on the size-1
+    # CPU/single-device mesh used off-cluster.
+    with jax.set_mesh(mesh):
+        for step in range(start_step, config.total_steps):
+            batch = shard_batch(next(data_iter), mesh)
+            state, metrics = train_step(state, batch)
 
-        if step % config.log_interval == 0:
-            # _log_edit_metrics reads float(loss), which blocks on this step's
-            # async dispatch -- so the clock below reflects real completion.
-            _log_edit_metrics(step, metrics)
-            now = time.perf_counter()
-            perf: dict[str, float] = {}
-            if last_log_time is not None and step > last_log_step:
-                perf = tracker.metrics(now - last_log_time, step - last_log_step)
-                if perf:
-                    _log_throughput(step, perf)
-            last_log_time, last_log_step = now, step
+            if step % config.log_interval == 0:
+                # _log_edit_metrics reads float(loss), which blocks on this step's
+                # async dispatch -- so the clock below reflects real completion.
+                _log_edit_metrics(step, metrics)
+                now = time.perf_counter()
+                perf: dict[str, float] = {}
+                if last_log_time is not None and step > last_log_step:
+                    perf = tracker.metrics(now - last_log_time, step - last_log_step)
+                    if perf:
+                        _log_throughput(step, perf)
+                last_log_time, last_log_step = now, step
 
-            if wandb_run is not None:
-                wandb_run.log(
-                    {**{k: float(v) for k, v in metrics.items()}, **perf},
-                    step=step,
+                if wandb_run is not None:
+                    wandb_run.log(
+                        {**{k: float(v) for k, v in metrics.items()}, **perf},
+                        step=step,
+                    )
+                if log_callback is not None:
+                    log_callback(step, {**metrics, **perf})
+
+            if config.output_dir and config.checkpoint_interval > 0 and (step + 1) % config.checkpoint_interval == 0:
+                ckpt_dir = epath.Path(config.output_dir) / f"step-{step + 1:06d}"
+                save_training_checkpoint(
+                    state.params, state.opt_state, state.step, state.key, config.model, ckpt_dir
                 )
-            if log_callback is not None:
-                log_callback(step, {**metrics, **perf})
-
-        if config.output_dir and config.checkpoint_interval > 0 and (step + 1) % config.checkpoint_interval == 0:
-            ckpt_dir = epath.Path(config.output_dir) / f"step-{step + 1:06d}"
-            save_training_checkpoint(state.params, state.opt_state, state.step, state.key, config.model, ckpt_dir)
 
     # Save final checkpoint (resumable, like the interval checkpoints).
     if config.output_dir:

@@ -41,6 +41,9 @@ from jax import random
 from jax.tree_util import register_dataclass
 from jaxtyping import Array, Float, Int, PRNGKeyArray
 from levanter.grug.attention import (
+    AttentionMask,
+)
+from levanter.grug.attention import (
     apply_rotary_embedding as grug_apply_rotary,
 )
 from levanter.grug.attention import (
@@ -162,19 +165,12 @@ def _to_compute_dtype(params: EditModelParams, dtype: jnp.dtype) -> EditModelPar
     return dataclasses.replace(params, blocks=tuple(cast_block(b) for b in params.blocks))
 
 
-def _make_causal_mask(seq_len: int) -> Float[Array, "S S"]:
-    """Create a causal attention mask.
-
-    Returns a (seq_len, seq_len) boolean mask where True means "allowed to
-    attend". Position i can attend to positions 0..i (inclusive).
-    """
-    return jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
-
-
 def forward(
     params: EditModelParams,
     token_ids: Int[Array, "B S"],
     cfg: EditModelConfig,
+    *,
+    fused_attention: bool = False,
 ) -> Float[Array, "B S V"]:
     """Causal AR forward pass for edit prediction.
 
@@ -183,6 +179,15 @@ def forward(
         token_ids: Input token IDs. The sequence is
             [context..., SOS, POS, replacement..., EOS, PAD...].
         cfg: Model configuration.
+        fused_attention: Select the attention path. False (default) builds a
+            dense causal+padding mask and takes grug's reference attention --
+            correct on any backend/sequence length with no mesh context, used by
+            inference (variable bucketed seq, single device). True expresses the
+            mask as a structured ``AttentionMask`` so grug picks the fused TPU
+            splash kernel (O(seq) memory instead of materializing the O(seq^2)
+            score matrix). Splash requires a JAX mesh context and seq % 128 == 0,
+            both of which hold on the training path; the two paths are
+            numerically identical at real (non-pad) positions.
 
     Returns:
         Logits of shape (batch, seq, vocab). For training, shift by 1
@@ -198,11 +203,20 @@ def forward(
     params = _to_compute_dtype(params, compute_dtype)
     hidden = params.token_embed[token_ids].astype(compute_dtype)
 
-    # Causal mask: position i can attend to 0..i. Combined with padding.
-    causal = _make_causal_mask(seq_len)
-    not_pad = token_ids != cfg.pad_token_id
-    # (B, S, S): causal AND both positions are not padding.
-    attn_mask = causal[None, :, :] & not_pad[:, None, :] & not_pad[:, :, None]
+    if fused_attention:
+        # Structured mask -> fused TPU splash kernel. Segment IDs: real tokens
+        # share segment 1, PAD tokens segment 0, so real tokens attend only
+        # within the real segment (and causally). PAD query rows produce junk but
+        # are zeroed by the loss mask downstream.
+        segment_ids = (token_ids != cfg.pad_token_id).astype(jnp.int32)
+        attn_mask: AttentionMask | jax.Array = AttentionMask.causal().with_segment_ids(segment_ids, segment_ids)
+    else:
+        # Dense (B, S, S) mask -> reference attention: causal AND both positions
+        # non-padding. Materializes the score matrix but needs no mesh and works
+        # for any seq length.
+        causal = jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
+        not_pad = token_ids != cfg.pad_token_id
+        attn_mask = causal[None, :, :] & not_pad[:, None, :] & not_pad[:, :, None]
 
     def _block_fn(hidden, block):
         attn_in = rms_norm(hidden, block.rms_attn, cfg.layer_norm_eps)
@@ -253,6 +267,8 @@ def ar_loss(
     token_ids: Int[Array, "B S"],
     loss_mask: Float[Array, "B S"],
     cfg: EditModelConfig,
+    *,
+    fused_attention: bool = False,
 ) -> tuple[Float[Array, ""], dict]:
     """Compute AR cross-entropy loss on edit predictions.
 
@@ -266,11 +282,13 @@ def ar_loss(
         loss_mask: Float mask, 1.0 for tokens that contribute to loss
             (POS, replacement, EOS), 0.0 for context and padding.
         cfg: Model configuration.
+        fused_attention: Passed through to :func:`forward` -- True on the
+            training path to select the fused TPU splash-attention kernel.
 
     Returns:
         Tuple of (scalar_loss, metrics_dict).
     """
-    logits = forward(params, token_ids, cfg)
+    logits = forward(params, token_ids, cfg, fused_attention=fused_attention)
 
     # Shift: predict token at position i+1 from logits at position i.
     shifted_logits = logits[:, :-1, :]
