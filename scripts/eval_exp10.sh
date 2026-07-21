@@ -36,6 +36,9 @@ SEED="${SEED:-42}"
 WANDB_PROJECT="${WANDB_PROJECT:-kelp}"
 RUN_PREFIX="${RUN_PREFIX:-exp10}"
 IMAGE="${IMAGE:-}"
+# Iris band; default launcher default (batch). Set interactive when you're
+# waiting on the result and the cluster is contended.
+PRIORITY_BAND="${PRIORITY_BAND:-}"
 
 SUBMIT=""
 for arg in "$@"; do
@@ -54,6 +57,7 @@ run_eval() {
     local launch_flags=(--preset "$PRESET" --name "kelp-eval-${RUN_PREFIX}-$tag")
     [ -n "$SUBMIT" ] && launch_flags+=("$SUBMIT")
     [ -n "$IMAGE" ] && launch_flags+=(--image "$IMAGE")
+    [ -n "$PRIORITY_BAND" ] && launch_flags+=(--priority-band "$PRIORITY_BAND")
 
     local eval_args=(
         --checkpoint-dir "$CHECKPOINT_DIR"
