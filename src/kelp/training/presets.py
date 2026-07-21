@@ -225,11 +225,19 @@ def tpu_vet_300m_preset() -> ModelPreset:
             num_kv_heads=16,
             max_seq_len=1024,
             compute_dtype="bfloat16",
+            # ~305M at batch 64 / seq 1024 OOMs the v6e-4's HBM even in bf16
+            # (observed: RESOURCE_EXHAUSTED after step 0). Gradient checkpointing
+            # recomputes block activations in the backward pass instead of holding
+            # all 18 layers' activations at once -- the dominant memory term --
+            # for ~33% more compute (well within the bf16 throughput headroom). It
+            # is numerically identical (same gradients), so batch 64 and the
+            # capacity comparison vs the 115M tpu_vet stay clean.
+            gradient_checkpointing=True,
         ),
         resource=ResourceConfig.with_tpu("v6e-4"),
         batch_size=64,
         learning_rate=3e-4,
-        description="~305M model on v6e-4 (bf16) for the exp10 capacity experiment",
+        description="~305M model on v6e-4 (bf16 + grad checkpointing) for the exp10 capacity experiment",
     )
 
 
