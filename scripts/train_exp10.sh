@@ -60,9 +60,16 @@ for arg in "$@"; do
     esac
 done
 
+# Iris scheduling band. Defaults to the launcher's default (batch) -- the good
+# citizen for long runs. Override with PRIORITY_BAND=interactive for a run you
+# are actively waiting on against a deadline (batch can be preempted, and a
+# preemption before the first checkpoint restarts from step 0).
+PRIORITY_BAND="${PRIORITY_BAND:-}"
+
 LAUNCH_FLAGS=(--preset "$PRESET")
 [ -n "$SUBMIT" ] && LAUNCH_FLAGS+=("$SUBMIT")
 [ -n "$IMAGE" ] && LAUNCH_FLAGS+=(--image "$IMAGE")
+[ -n "$PRIORITY_BAND" ] && LAUNCH_FLAGS+=(--priority-band "$PRIORITY_BAND")
 
 # W&B logging depends on WANDB_API_KEY being present at launch (kelp-launch
 # forwards it from the shell env). Missing it silently disables charts -- but the
