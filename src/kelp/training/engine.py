@@ -432,7 +432,11 @@ def train_edit_model(
     key = jax.random.PRNGKey(config.seed)
     optimizer = create_edit_optimizer(config)
 
-    # Initialize W&B if configured.
+    # Initialize W&B if configured. Logging must never take down a training run:
+    # a missing package (ImportError) OR a missing/invalid API key (wandb raises
+    # UsageError) OR any other init failure degrades to logs-only rather than
+    # crashing. Metrics still print to the job logs (see _log_edit_metrics /
+    # _log_throughput), so the run remains fully observable without W&B.
     wandb_run = None
     if config.wandb_project is not None:
         try:
@@ -449,6 +453,9 @@ def train_edit_model(
             logger.info(f"W&B logging enabled: {wandb_run.url}")
         except ImportError:
             logger.warning("wandb not installed; skipping W&B logging")
+        except Exception as e:
+            logger.warning("W&B init failed (%s: %s); continuing with logs-only.", type(e).__name__, e)
+            wandb_run = None
 
     if initial_state is not None:
         state = initial_state
