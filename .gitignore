@@ -30,3 +30,6 @@ wandb/
 # Local secrets (never commit)
 alex.env
 *.env
+
+# Generated slide decks (regenerate with decks/render.sh)
+decks/*.html
