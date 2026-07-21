@@ -36,8 +36,8 @@ Why it's hard:
 
 ## The idea: "tree diffusion"
 
-Image models learn by **adding noise to a picture, then removing it**. Kelp does
-the same thing for code:
+Image models learn by **adding noise to a picture, then removing it**. The same
+idea works for code — that's **tree diffusion**:
 
 <div class="oa-box">
 
@@ -47,9 +47,15 @@ model to predict the edit that *undoes* it.
 </div>
 
 - Edits happen on the code's **syntax tree** (its grammatical structure), so the
-  result is always valid Python.
+  result is always valid.
 - Repair is **iterative**: predict one edit → apply it → look again → repeat.
-  Small, checkable steps instead of one big guess.
+
+<div class="oa-key">
+Introduced by <strong>Kapur, Jenner &amp; Russell (2024)</strong>,
+<em><a href="https://tree-diffusion.github.io/">Diffusion on Syntax Trees for Program Synthesis</a></em>
+— shown on <strong>toy graphics programs</strong> (drawing shapes to match a picture).
+<strong>Kelp takes that core idea and scales it to real-world Python.</strong>
+</div>
 
 ## How we train it (no labeled bugs needed)
 
