@@ -373,6 +373,69 @@ recovered from the logs.
   "valid ≠ correct" gap, now at a much higher floor. The next frontier is
   edit-position calibration and repair correctness, not more data.
 
+### v10: Single-edit training + a controlled capacity test (`exp10`)
+
+v9 ended with a clear hypothesis: the wall is **localization/correctness, not
+model size**. v10 tests that directly, and changes the training task to match how
+the model actually repairs at inference. Two changes on top of v9:
+
+1. **Single-edit training.** `--max-corruption-steps 1` (constant, not
+   curriculum). Tree diffusion repairs iteratively — one edit per step, then
+   re-check — so a single-edit target *is* the per-step objective. This removes a
+   train/inference mismatch and sharpens the localization signal.
+2. **A held-cost capacity test.** The performance work (issue #132: real bf16 +
+   fused splash attention + gradient checkpointing) makes a **~305M** model
+   (`tpu_vet_300m`) fit the v6e-4 and train at ~the same wall-clock as the 115M.
+   We also ran a **115M single-edit control** so the v9→v10 delta separates
+   cleanly into *task* (single-edit) vs *capacity* (115M → 305M).
+
+**Training setup:**
+- Models: `tpu_vet` (~115M) and `tpu_vet_300m` (~305M: hidden 1024, 18 layers,
+  MHA), both **bf16**, batch 64, LR 3e-4, 50K steps, seq 1024.
+- Everything else held at v9 values (realistic-or-drop corruption, prompt
+  conditioning, curated_v2 corpus, streaming synthesis) so only `{task, size}`
+  vary.
+- Hardware: TPU v6e-4 via Iris. Both runs survived **3 preemptions total** by
+  auto-resuming from checkpoints (interval lowered to 2000 for resilience).
+
+**Evaluation (MBPP, held out; step-48000 common checkpoint, best-of-16,
+corruption-steps=1, matched to single-edit training):**
+
+| Metric | 115M control | 305M |
+|--------|--------------|------|
+| Best-of-16 test pass — matched | 17.4% | **18.8%** |
+| Best-of-16 test pass — unmatched | 18.0% | **18.7%** |
+| Syntactic validity | 100% | 100% |
+| Tasks evaluated (matched / unmatched) | 48 / 50 | 48 / 50 |
+
+The eval **no longer hangs**: `run_mbpp_test` now bounds each candidate with a 5s
+execution timeout (issue #134-related), so a non-terminating repair fails its
+test instead of stalling the run (v9 lost 17/50 this way). The 2 matched tasks
+not evaluated had no valid single-edit corruption and were dropped, not hung.
+
+**What we learned:**
+- **Capacity did not move repair.** 305M beats 115M by +1.4pp (matched) / +0.7pp
+  (unmatched) — within noise. This **confirms v9's diagnosis**: the bottleneck is
+  localization and the repair loop, *not* parameter count. Scaling up is not the
+  lever.
+- **Single-edit lifted the floor (~15% → ~18%).** The 115M single-edit control
+  (17.4–18.0%) sits above v9's 115M/2-step (~15%), so task alignment with the
+  iterative inference helped — though this is not apples-to-apples (v9 evaluated
+  at 2-step corruption).
+- **Matched ≈ unmatched again** (18.8% vs 18.7% at 305M) — a robust, *general*
+  repair skill, not corruption-overfit, consistent with v9.
+
+**Next steps:**
+- **exp11 targets the repair loop, not the model.** Edit-position calibration
+  (issue #138: constrain decoding to valid AST boundaries), execution-guided
+  search depth, and constrained decoding — where the 15→18%→*higher* gains live.
+- **Validation-during-training** — measure held-out repair rate every few
+  thousand steps (token loss saturates and hides the metric that matters),
+  enabling early stopping and live capacity readouts.
+- **Infra hardened this cycle** (all landed): real bf16 compute, fused splash
+  attention, MFU logging (issue #132); preemption-resilient checkpointing; a
+  non-hanging eval; and BATCH-band scheduling by default.
+
 ## Project Structure
 
 The package is layered so the pipeline reads top to bottom — representation →
