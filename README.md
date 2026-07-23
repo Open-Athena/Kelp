@@ -425,6 +425,21 @@ not evaluated had no valid single-edit corruption and were dropped, not hung.
 - **Matched ≈ unmatched again** (18.8% vs 18.7% at 305M) — a robust, *general*
   repair skill, not corruption-overfit, consistent with v9.
 
+**Post-review addendum (2026-07-23, issues #142/#143):** treat the two
+conclusions above as *preliminary*. (1) At n≈50 tasks the standard error is
+roughly 5pp, so the +1.4pp capacity delta AND the +3pp "floor lift" are both
+inside the noise — the eval now reports bootstrap CIs and a tasks-fully-repaired
+metric, and the 500-task deconfounding grid
+([scripts/eval_deconfound.sh](scripts/eval_deconfound.sh)) is the run that can
+actually settle both claims. (2) The single-edit rationale as stated is wrong
+about our own pipeline: the training *target* was always a single path-step edit
+(`training/generation.py`); `--max-corruption-steps 1` narrowed the *input state
+distribution* to states one edit from clean — the opposite of the paper's
+reverse-path recipe — while inference remains a 10-step iterative loop. What
+single-edit training cost in multi-error repair is unmeasured until the
+steps=2,3 cells of the grid run. See [docs/kelp_v2.md](docs/kelp_v2.md) for the
+redesign that follows from this.
+
 **Next steps:**
 - **exp11 targets the repair loop, not the model.** Edit-position calibration
   (issue #138: constrain decoding to valid AST boundaries), execution-guided

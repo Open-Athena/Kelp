@@ -45,6 +45,7 @@ import jax
 from etils import epath
 
 from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
+from kelp.cli._stats import bootstrap_ci
 from kelp.cli._test_runner import default_runner
 from kelp.cli._logging import configure_logging
 from kelp.corpus import is_valid_python, load_corpus
@@ -216,6 +217,10 @@ def evaluate_mbpp_task(
         "exact_match_rate": total_exact_match / max(total_candidates, 1),
         "avg_test_pass_rate": total_test_pass_rate / max(total_trials, 1),
         "best_test_pass_rate": best_overall_pass_rate,
+        # Fully repaired: some candidate in some trial passed EVERY assert.
+        # The partial-credit rates above cannot distinguish "80% of asserts on
+        # most tasks" from "all asserts on 80% of tasks"; this can (issue #142).
+        "solved": total_trials > 0 and best_overall_pass_rate == 1.0,
         "best_candidate": best_overall_candidate.strip()[:200],
         "clean": clean.strip()[:200],
     }
@@ -468,6 +473,15 @@ def main():
     avg_exact = sum(r["exact_match_rate"] for r in tasks_with_trials) / len(tasks_with_trials)
     avg_test_pass = sum(r["avg_test_pass_rate"] for r in tasks_with_trials) / len(tasks_with_trials)
     avg_best_pass = sum(r["best_test_pass_rate"] for r in tasks_with_trials) / len(tasks_with_trials)
+    # "solved" may be absent in shards written before #142; derive it then.
+    solved_flags = [float(r.get("solved", r["best_test_pass_rate"] == 1.0)) for r in tasks_with_trials]
+    solved_rate = sum(solved_flags) / len(solved_flags)
+
+    # Task-level bootstrap CIs: the error bars every reported delta must clear
+    # before it becomes a conclusion (issue #142).
+    avg_pass_ci = bootstrap_ci([r["avg_test_pass_rate"] for r in tasks_with_trials], seed=args.seed)
+    best_pass_ci = bootstrap_ci([r["best_test_pass_rate"] for r in tasks_with_trials], seed=args.seed)
+    solved_ci = bootstrap_ci(solved_flags, seed=args.seed)
 
     logger.info("")
     logger.info("=" * 70)
@@ -480,12 +494,13 @@ def main():
     logger.info(f"Subtree bank: {'training corpus' if args.corpus_file else 'eval programs only'}")
     logger.info(f"Time: {elapsed:.1f}s")
     logger.info("")
-    logger.info(f"{'Metric':<30} {'Value':>10}")
-    logger.info("-" * 42)
+    logger.info(f"{'Metric':<30} {'Value':>10}  {'95% CI':>18}")
+    logger.info("-" * 62)
     logger.info(f"{'Syntactic validity rate':<30} {avg_valid:>10.1%}")
     logger.info(f"{'Exact match rate':<30} {avg_exact:>10.1%}")
-    logger.info(f"{'Avg test pass rate':<30} {avg_test_pass:>10.1%}")
-    logger.info(f"{'Best test pass rate':<30} {avg_best_pass:>10.1%}")
+    logger.info(f"{'Avg test pass rate':<30} {avg_test_pass:>10.1%}  [{avg_pass_ci[0]:>6.1%}, {avg_pass_ci[1]:>6.1%}]")
+    logger.info(f"{'Best test pass rate':<30} {avg_best_pass:>10.1%}  [{best_pass_ci[0]:>6.1%}, {best_pass_ci[1]:>6.1%}]")
+    logger.info(f"{'Tasks fully repaired':<30} {solved_rate:>10.1%}  [{solved_ci[0]:>6.1%}, {solved_ci[1]:>6.1%}]")
     logger.info("=" * 70)
 
     if args.wandb_project:
@@ -495,6 +510,7 @@ def main():
             {
                 "mbpp_avg_pass_rate": avg_test_pass,
                 "mbpp_best_pass_rate": avg_best_pass,
+                "mbpp_solved_rate": solved_rate,
                 "syntactic_validity": avg_valid,
                 "exact_match": avg_exact,
                 "tasks_evaluated": len(tasks_with_trials),
@@ -521,7 +537,11 @@ def main():
             "syntactic_validity": avg_valid,
             "exact_match": avg_exact,
             "avg_test_pass_rate": avg_test_pass,
+            "avg_test_pass_rate_ci95": list(avg_pass_ci),
             "best_test_pass_rate": avg_best_pass,
+            "best_test_pass_rate_ci95": list(best_pass_ci),
+            "solved_rate": solved_rate,
+            "solved_rate_ci95": list(solved_ci),
         },
         "per_task": all_results,
         "elapsed_seconds": elapsed,
