@@ -39,8 +39,31 @@ import sys
 logger = logging.getLogger(__name__)
 
 
+def _worker_argv() -> list[str]:
+    return [sys.executable, "-u", "-m", "kelp.cli._test_runner"]
+
+
+def _worker_env() -> dict:
+    """Child env with the parent's ``kelp`` location prepended to PYTHONPATH.
+
+    The parent may import ``kelp`` through sys.path entries that are not
+    reflected in the environment (editable installs, workspace sync layouts on
+    cluster workers). ``python -m kelp.cli._test_runner`` in the child must
+    resolve the same package, or every test would fail as import errors.
+    """
+    import kelp
+
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(kelp.__file__)))
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{pkg_root}{os.pathsep}{existing}" if existing else pkg_root
+    return env
+
+
 class SubprocessTestRunner:
     """Runs candidate/test pairs in a kill-on-timeout worker subprocess."""
+
+    _PROBE_TIMEOUT_S = 30.0
 
     def __init__(self) -> None:
         self._proc: subprocess.Popen | None = None
@@ -48,13 +71,41 @@ class SubprocessTestRunner:
     def _ensure_worker(self) -> subprocess.Popen:
         if self._proc is None or self._proc.poll() is not None:
             self._proc = subprocess.Popen(
-                [sys.executable, "-u", "-m", "kelp.cli._test_runner"],
+                _worker_argv(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 bufsize=0,
+                env=_worker_env(),
             )
+            self._probe(self._proc)
         return self._proc
+
+    def _probe(self, proc: subprocess.Popen) -> None:
+        """Fail LOUDLY if a fresh worker cannot pass a trivial assert.
+
+        A worker that cannot even import/run (broken PYTHONPATH on a cluster
+        image, wrong interpreter) would otherwise report False for every test
+        -- an eval full of plausible-looking zeros instead of a crash. Runs
+        once per (re)spawn; a real eval never legitimately fails this job.
+        """
+        job = json.dumps({"setup": "", "program": "x = 1", "test": "assert x == 1"})
+        try:
+            proc.stdin.write((job + "\n").encode())
+            proc.stdin.flush()
+            readable, _, _ = select.select([proc.stdout], [], [], self._PROBE_TIMEOUT_S)
+            reply = proc.stdout.readline() if readable else b""
+        except OSError:
+            reply = b""
+        if reply != b"1\n":
+            proc.kill()
+            proc.wait()
+            self._proc = None
+            raise RuntimeError(
+                "Test-runner worker failed its startup probe -- 'kelp' is likely not "
+                f"importable by {sys.executable} in the worker environment. Refusing to "
+                "run an eval whose every test would silently report False."
+            )
 
     def _kill_worker(self) -> None:
         if self._proc is None:

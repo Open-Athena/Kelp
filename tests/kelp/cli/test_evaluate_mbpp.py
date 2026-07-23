@@ -5,6 +5,7 @@
 
 import time
 
+import pytest
 from etils import epath
 
 from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
@@ -95,3 +96,17 @@ def test_results_persist_and_reload_for_resume(tmp_path):
     loaded = load_completed(shards, "task_id")
     assert set(loaded) == {7, 42}
     assert loaded[7]["avg_test_pass_rate"] == 0.5
+
+
+def test_broken_worker_environment_fails_loudly(monkeypatch):
+    """A worker that cannot start (e.g. 'kelp' unimportable on a cluster image)
+    must raise, not report False for every test -- an eval of silent zeros is
+    worse than a crash (#141 hardening for remote launches)."""
+    import sys
+
+    from kelp.cli import _test_runner
+
+    monkeypatch.setattr(_test_runner, "_worker_argv", lambda: [sys.executable, "-c", "import nonexistent_pkg"])
+    runner = _test_runner.SubprocessTestRunner()
+    with pytest.raises(RuntimeError, match="startup probe"):
+        runner.run("x = 1", "assert x == 1", timeout_s=5.0)
