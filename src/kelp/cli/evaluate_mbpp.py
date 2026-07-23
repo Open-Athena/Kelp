@@ -38,15 +38,14 @@ import ast
 import json
 import logging
 import random
-import signal
 import sys
 import time
-from contextlib import contextmanager
 
 import jax
 from etils import epath
 
 from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
+from kelp.cli._test_runner import default_runner
 from kelp.cli._logging import configure_logging
 from kelp.corpus import is_valid_python, load_corpus
 from kelp.inference.beam_search import best_of_n
@@ -105,60 +104,15 @@ def load_mbpp_eval_tasks(max_length: int = 512, max_tasks: int = 0) -> list[dict
     return tasks
 
 
-class _TestTimeout(Exception):
-    """Raised when a generated candidate exceeds the per-test wall-clock limit."""
-
-
-@contextmanager
-def _time_limit(seconds: float):
-    """Best-effort wall-clock limit for executing generated code.
-
-    Guards against a non-terminating candidate (e.g. ``while True``) hanging the
-    whole eval -- exactly the vet-cond-v2 failure where one task's runaway
-    candidate stalled the run and 17/50 tasks were lost. Uses SIGALRM, which is
-    main-thread + Unix only; off the main thread (or if unavailable) it degrades
-    to no limit rather than erroring. A C-level busy loop can still ignore the
-    signal, but model-generated MBPP code is pure Python and interruptible.
-    """
-    if seconds <= 0:
-        yield
-        return
-
-    def _handler(signum, frame):
-        raise _TestTimeout()
-
-    try:
-        old = signal.signal(signal.SIGALRM, _handler)
-    except ValueError:
-        # Not the main thread -> cannot arm SIGALRM; run without a limit.
-        yield
-        return
-
-    signal.setitimer(signal.ITIMER_REAL, seconds)
-    try:
-        yield
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, old)
-
-
 def run_mbpp_test(program: str, test_assert: str, setup_code: str = "", timeout_s: float = 5.0) -> bool:
     """Execute an MBPP assert-based test case against a program.
 
-    ``timeout_s`` bounds execution so a non-terminating candidate fails the test
-    instead of hanging the eval (0 disables the limit). See :func:`_time_limit`.
+    Runs in a sandboxed worker subprocess with a hard kill-on-timeout
+    (:mod:`kelp.cli._test_runner`), so a non-terminating candidate fails the
+    test instead of hanging the eval regardless of what the candidate code does
+    (0 disables the limit).
     """
-    try:
-        namespace: dict = {}
-        with _time_limit(timeout_s):
-            if setup_code:
-                exec(setup_code, namespace)
-            exec(program, namespace)
-            exec(test_assert, namespace)
-        return True
-    except Exception:
-        # Includes _TestTimeout (a non-terminating candidate) -> a failed test.
-        return False
+    return default_runner().run(program, test_assert, setup_code=setup_code, timeout_s=timeout_s)
 
 
 def evaluate_mbpp_task(
