@@ -143,6 +143,11 @@ class EditTrainingConfig:
     """Probability of including a docstring prompt when one is available.
     Only effective when the model config has prompt_tokens=True."""
 
+    p_spec: float = 0.5
+    """Probability of including a doctest-derived assert spec when one is
+    available (issue #147). Only effective when the model config has
+    spec_tokens=True. Independent of p_prompt for the conditioning ablation."""
+
     p_near_miss: float = 0.0
     """Probability of corrupting with an e-graph near-miss (realistic in-context
     operator-flip bug) instead of a bank subtree swap, on the forward-diffusion

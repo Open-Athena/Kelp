@@ -189,6 +189,7 @@ def generate_edit(
     temperature: float = 1.0,
     max_replacement_len: int = 64,
     prompt: str | None = None,
+    spec: str | None = None,
     constrain_position: bool = False,
 ) -> tuple[Mutation | None, float]:
     """Generate a single edit from the model via autoregressive decoding.
@@ -210,15 +211,18 @@ def generate_edit(
         max_replacement_len: Maximum replacement length in tokens.
         prompt: Optional natural language prompt (e.g. docstring or task
             description) to prepend to the context. Requires prompt_tokens=True.
+        spec: Optional specification block (test asserts / I-O examples) to
+            prepend after the prompt. Requires spec_tokens=True (issue #147).
 
     Returns:
         Tuple of (mutation, log_probability). Returns (None, -inf) if the
         generated edit is invalid or decoding fails.
     """
-    # Encode optional prompt prefix.
-    prompt_prefix: list[int] = []
-    if prompt is not None and tokenizer.prompt_tokens:
-        prompt_prefix = tokenizer.encode_prompt_prefix(prompt)
+    # Encode optional prompt/spec conditioning prefix.
+    prompt_prefix = tokenizer.encode_prompt_prefix(
+        prompt if prompt is not None and tokenizer.prompt_tokens else None,
+        spec=spec if spec is not None and tokenizer.spec_tokens else None,
+    )
 
     context_tokens = tokenizer.encode_source(source)
 
@@ -311,6 +315,7 @@ def beam_search(
     max_depth: int = 30,
     temperature: float = 1.0,
     prompt: str | None = None,
+    spec: str | None = None,
     constrain_position: bool = False,
 ) -> list[BeamCandidate]:
     """Run beam search to refine programs through iterative edits.
@@ -357,6 +362,7 @@ def beam_search(
                     key=expansion_keys[key_idx],
                     temperature=temperature,
                     prompt=prompt,
+                    spec=spec,
                     constrain_position=constrain_position,
                 )
                 key_idx += 1
@@ -401,6 +407,7 @@ def best_of_n(
     max_depth: int = 30,
     temperature: float = 1.0,
     prompt: str | None = None,
+    spec: str | None = None,
     constrain_position: bool = False,
 ) -> list[BeamCandidate]:
     """Best-of-N sampling: run N independent rollouts, return all results.
@@ -440,6 +447,7 @@ def best_of_n(
                 key=step_key,
                 temperature=temperature,
                 prompt=prompt,
+                spec=spec,
                 constrain_position=constrain_position,
             )
 

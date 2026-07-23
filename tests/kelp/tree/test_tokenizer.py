@@ -322,3 +322,46 @@ def test_extract_docstring_syntax_error():
 
 def test_extract_docstring_no_function():
     assert extract_docstring("x = 1\n") is None
+
+
+# --- Spec token tests (issue #147) ---
+
+
+@pytest.fixture
+def tok_spec():
+    return EditTokenizer(max_seq_len=512, prompt_tokens=True, spec_tokens=True)
+
+
+def test_spec_layout_and_preconditions(tok_prompt, tok_spec):
+    """spec_tokens adds SPEC_START/SPEC_END (IDs 5/6), shifting positions to 7;
+    it is invalid without prompt_tokens; prompt-only layout is unchanged
+    (backward compatible with existing prompt-conditioned checkpoints)."""
+    assert tok_spec.num_special_tokens == 7
+    assert (tok_spec.spec_start_token_id, tok_spec.spec_end_token_id) == (5, 6)
+    assert tok_spec.position_token_offset == 7
+    assert tok_spec.vocab_size == tok_prompt.vocab_size + 2
+    assert tok_prompt.position_token_offset == 5  # unchanged by the feature
+    with pytest.raises(ValueError):
+        EditTokenizer(max_seq_len=512, spec_tokens=True)  # no prompt_tokens
+    with pytest.raises(ValueError):
+        tok_prompt.encode_prompt_prefix("p", spec="assert f(1) == 2")
+
+
+def test_spec_prefix_block_order_and_roundtrip(tok_spec):
+    """The conditioning prefix is [PROMPT..][SPEC..], either block optional, and
+    training encoding masks the whole prefix out of the loss."""
+    prefix = tok_spec.encode_prompt_prefix("Add.", spec="assert add(1, 2) == 3")
+    assert prefix[0] == tok_spec.prompt_start_token_id
+    end = prefix.index(tok_spec.prompt_end_token_id)
+    assert prefix[end + 1] == tok_spec.spec_start_token_id
+    assert prefix[-1] == tok_spec.spec_end_token_id
+
+    spec_only = tok_spec.encode_prompt_prefix(None, spec="assert add(1, 2) == 3")
+    assert spec_only[0] == tok_spec.spec_start_token_id
+
+    token_ids, loss_mask = tok_spec.encode_training_example(
+        "x = 1\n", 4, "2", prompt_source="Add.", spec_source="assert x == 2"
+    )
+    own_prefix = len(tok_spec.encode_prompt_prefix("Add.", spec="assert x == 2"))
+    assert loss_mask[:own_prefix] == [0] * own_prefix  # prefix carries no loss
+    assert tok_spec.decode_source(token_ids).startswith("Add.assert x == 2x = 1\n")

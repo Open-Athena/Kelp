@@ -131,6 +131,19 @@ def parse_args() -> argparse.Namespace:
         help="Probability of including a docstring prompt when available (default: 0.5)",
     )
     parser.add_argument(
+        "--spec-conditioning",
+        action="store_true",
+        help="Enable spec conditioning (adds SPEC_START/SPEC_END tokens; doctest-derived assert "
+        "specs from the clean program become a goal-observation block). Implies --prompt-conditioning.",
+    )
+    parser.add_argument(
+        "--p-spec",
+        type=float,
+        default=0.5,
+        help="Probability of including an assert spec when one is available (default: 0.5). "
+        "Independent of --p-prompt so the {none, NL, spec, NL+spec} ablation grid is trainable.",
+    )
+    parser.add_argument(
         "--p-near-miss",
         type=float,
         default=0.0,
@@ -210,8 +223,10 @@ def main():
 
     preset = get_preset(args.preset)
     model_config = preset.config
-    if args.prompt_conditioning:
+    if args.prompt_conditioning or args.spec_conditioning:
         model_config = replace(model_config, prompt_tokens=True)
+    if args.spec_conditioning:
+        model_config = replace(model_config, spec_tokens=True)
     if args.compute_dtype is not None:
         model_config = replace(model_config, compute_dtype=args.compute_dtype)
     if args.max_seq_len is not None:
@@ -245,7 +260,11 @@ def main():
     if args.augment:
         rng = random.Random(args.seed)
         bank = augment_bank(bank, rng, n_renamed=2, n_perturbed=2, synthetic_count=50)
-    tokenizer = EditTokenizer(max_seq_len=model_config.max_seq_len, prompt_tokens=model_config.prompt_tokens)
+    tokenizer = EditTokenizer(
+        max_seq_len=model_config.max_seq_len,
+        prompt_tokens=model_config.prompt_tokens,
+        spec_tokens=model_config.spec_tokens,
+    )
     logger.info(f"Subtree bank: {bank.total_entries} entries across {len(bank.entries)} node types")
 
     # Override model config vocab_size to match tokenizer.
@@ -268,6 +287,7 @@ def main():
         corruption_curriculum=args.corruption_curriculum,
         curriculum_warmup_fraction=args.curriculum_warmup_fraction,
         p_prompt=args.p_prompt,
+        p_spec=args.p_spec,
         p_near_miss=args.p_near_miss,
         p_random=args.p_random,
         allow_bank_swap=args.allow_bank_swap,

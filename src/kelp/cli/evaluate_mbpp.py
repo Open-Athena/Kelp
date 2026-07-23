@@ -143,6 +143,11 @@ def evaluate_mbpp_task(
     tests = task["tests"]
     setup_code = task.get("setup_code", "")
     prompt = task.get("text") if tokenizer.prompt_tokens else None
+    # Spec conditioning (issue #147): the task's asserts become the model's
+    # goal-observation block. NOTE these are the same asserts that score the
+    # metric, which makes best-of-N reranking partially circular -- spec-
+    # conditioned results must be reported with and without reranking.
+    spec = "\n".join(tests) if tokenizer.spec_tokens and tests else None
     rng = random.Random(task["task_id"])
 
     total_valid = 0
@@ -180,6 +185,7 @@ def evaluate_mbpp_task(
             max_depth=max_depth,
             temperature=0.8,
             prompt=prompt,
+            spec=spec,
             constrain_position=constrain_position,
         )
 
@@ -386,7 +392,11 @@ def main():
     logger.info(f"Evaluating checkpoint: {ckpt_dir}")
 
     params, config = load_checkpoint(ckpt_dir)
-    tokenizer = EditTokenizer(max_seq_len=config.max_seq_len, prompt_tokens=config.prompt_tokens)
+    tokenizer = EditTokenizer(
+        max_seq_len=config.max_seq_len,
+        prompt_tokens=config.prompt_tokens,
+        spec_tokens=getattr(config, "spec_tokens", False),
+    )
 
     # Load MBPP eval tasks.
     eval_tasks = load_mbpp_eval_tasks(max_tasks=args.max_tasks)

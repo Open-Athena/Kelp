@@ -79,6 +79,12 @@ class EditModelConfig:
     (IDs 3 and 4), shifting position and byte token offsets by +2.
     Old checkpoints deserialize with False, keeping the legacy layout."""
 
+    spec_tokens: bool = False
+    """If True, the tokenizer additionally uses SPEC_START/SPEC_END special
+    tokens (IDs 5 and 6) for a test-assert specification block, shifting
+    position and byte token offsets by +2 more. Requires prompt_tokens=True.
+    Old checkpoints deserialize with False (issue #147)."""
+
     pad_token_id: int = 0
     """Token ID for padding."""
 
