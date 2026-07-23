@@ -202,6 +202,45 @@ def tpu_vet_preset() -> ModelPreset:
     )
 
 
+def tpu_vet_300m_preset() -> ModelPreset:
+    """~300M model on the same v6e-4 slice as ``tpu_vet``, for the exp10 capacity test.
+
+    The bf16 + fused-attention landing (issue #132) roughly halved activation
+    memory and 2-4x'd throughput, so ~2.6x the ``tpu_vet`` parameters (115M ->
+    ~305M) now fits the v6e-4 and trains at ~similar wall-clock. Same width-to-
+    depth balance as ``tpu_vet`` scaled up: hidden 768->1024, layers 12->18, with
+    head_dim held at 64 (16 heads). MHA (num_kv_heads == num_heads) to keep the
+    capacity comparison against the 115M ``tpu_vet`` clean. batch_size and LR are
+    held at the ``tpu_vet`` values on purpose so exp10 varies *only* capacity
+    (and the single-edit task) -- see scripts/train_exp10_300m.sh.
+    """
+    return ModelPreset(
+        name="tpu_vet_300m",
+        config=EditModelConfig(
+            vocab_size=DEFAULT_VOCAB_SIZE,
+            hidden_dim=1024,
+            intermediate_dim=4096,
+            num_layers=18,
+            num_heads=16,
+            num_kv_heads=16,
+            max_seq_len=1024,
+            compute_dtype="bfloat16",
+            # ~305M at batch 64 / seq 1024 OOMs the v6e-4's HBM even in bf16
+            # (observed: RESOURCE_EXHAUSTED after step 0). Gradient checkpointing
+            # recomputes block activations in the backward pass instead of holding
+            # all 18 layers' activations at once -- the dominant memory term --
+            # for ~33% more compute (well within the bf16 throughput headroom). It
+            # is numerically identical (same gradients), so batch 64 and the
+            # capacity comparison vs the 115M tpu_vet stay clean.
+            gradient_checkpointing=True,
+        ),
+        resource=ResourceConfig.with_tpu("v6e-4"),
+        batch_size=64,
+        learning_rate=3e-4,
+        description="~305M model on v6e-4 (bf16 + grad checkpointing) for the exp10 capacity experiment",
+    )
+
+
 def tpu_v4_8_preset() -> ModelPreset:
     """Large preset for v4-8 TPU (~1.6B params)."""
     return ModelPreset(
@@ -249,6 +288,7 @@ PRESETS = {
     "single_gpu": single_gpu_preset,
     "tpu_smoke": tpu_smoke_preset,
     "tpu_vet": tpu_vet_preset,
+    "tpu_vet_300m": tpu_vet_300m_preset,
     "tpu_v4_8": tpu_v4_8_preset,
     "tpu_v5p_8": tpu_v5p_8_preset,
 }

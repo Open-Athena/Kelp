@@ -1,0 +1,143 @@
+/* Open Athena slide look, ported to pandoc + reveal.js.
+ * Mirrors the palette / type / components of Open-Athena/oa-slidev-theme
+ * (styles/base.css) so pandoc decks match the Slidev template. */
+
+@import url('https://fonts.googleapis.com/css2?family=Castoro:ital@0;1&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --oa-beige: #C4B7A6;
+  --oa-beige-lighter: #E8E0D5;
+  --oa-dark: #1F1E1B;
+  --oa-dark-lighter: #2E2C29;
+  --oa-copper: #976F4A;
+  --oa-copper-light: #C49A6C;
+  --oa-copper-dark: #8B6340;
+  --oa-green: #85826D;
+  --oa-olive: #6B6B4F;
+  --oa-text-dark: #2D2D2D;
+  --oa-text-body: #3A3A3A;
+  --oa-text-muted: #7A7A7A;
+  --oa-text-on-dark: #D5CBBD;
+  --oa-text-gold: #BFA77A;
+  --oa-white: #FAFAF7;
+  --oa-border: #B5A898;
+  --oa-font-serif: 'Castoro', Georgia, 'Times New Roman', serif;
+  --oa-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ─── Base ─── */
+.reveal { font-family: var(--oa-font-sans); font-size: 28px; color: var(--oa-text-body); }
+.reveal-viewport, .reveal .backgrounds { background: var(--oa-beige); }
+.reveal .slides { text-align: left; }
+.reveal .slides > section,
+.reveal .slides > section > section {
+  padding: 40px 54px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* ─── Typography ─── */
+.reveal h1 {
+  font-family: var(--oa-font-serif);
+  font-weight: 400;
+  font-size: 1.85em;
+  line-height: 1.15;
+  color: var(--oa-text-dark);
+  text-transform: none;
+  letter-spacing: normal;
+  margin-bottom: 0.3em;
+}
+.reveal h2 {
+  font-family: var(--oa-font-sans);
+  font-weight: 700;
+  font-size: 1.3em;
+  color: var(--oa-text-dark);
+  text-transform: none;
+  letter-spacing: normal;
+  margin-bottom: 0.5em;
+}
+.reveal h3 {
+  font-family: var(--oa-font-sans);
+  font-weight: 600;
+  font-size: 1.02em;
+  color: var(--oa-text-dark);
+  text-transform: none;
+  margin-bottom: 0.3em;
+}
+.reveal p, .reveal li { color: var(--oa-text-body); }
+.reveal strong { color: var(--oa-text-dark); font-weight: 700; }
+.reveal em { font-style: italic; }
+.reveal a { color: var(--oa-copper-dark); text-decoration: underline; text-underline-offset: 2px; }
+.reveal a:hover { color: var(--oa-copper); }
+
+/* subtitle: first paragraph right after an h1 */
+.reveal h1 + p { color: var(--oa-text-muted); font-size: 0.85em; margin-top: -0.2em; }
+
+/* ─── Lists ─── */
+.reveal ul { list-style: disc; }
+.reveal ol { list-style: decimal; }
+.reveal ul li, .reveal ol li { margin-bottom: 0.3em; line-height: 1.4; }
+.reveal li::marker { color: var(--oa-copper-dark); }
+
+/* ─── Tables ─── */
+.reveal table { width: 100%; border-collapse: collapse; font-size: 0.78em; margin: 0.4em 0; }
+.reveal thead th {
+  background: var(--oa-olive); color: var(--oa-white);
+  font-weight: 700; padding: 8px 14px; text-align: left;
+  border-bottom: 2px solid var(--oa-border);
+}
+.reveal tbody td { padding: 7px 14px; border-bottom: 1px solid var(--oa-border); vertical-align: top; }
+.reveal tbody tr:last-child td { border-bottom: none; }
+
+/* ─── Code ─── */
+.reveal pre { box-shadow: none; width: 100%; margin: 0.4em 0; font-size: 0.62em; }
+.reveal pre > code {
+  background: var(--oa-beige-lighter) !important;
+  border: 1px solid var(--oa-border);
+  border-radius: 8px;
+  padding: 14px 18px;
+  line-height: 1.55;
+  color: #37322a;
+  max-height: none;
+}
+.reveal :not(pre) > code {
+  background: rgba(0,0,0,0.08); color: var(--oa-copper-dark);
+  padding: 2px 6px; border-radius: 4px; font-size: 0.9em;
+}
+
+/* ─── Blockquote / hr ─── */
+.reveal blockquote {
+  border-left: 4px solid var(--oa-copper); background: none; box-shadow: none;
+  padding: 0.2em 0 0.2em 0.9em; margin: 0.8em 0; font-style: italic;
+  color: var(--oa-text-body); width: auto;
+}
+.reveal hr { border: none; border-top: 1px dashed var(--oa-border); margin: 0.9em 0; }
+
+/* ─── Title slide + dark section slides ─── */
+#title-slide h1.title { font-family: var(--oa-font-serif); font-weight: 400; color: var(--oa-text-gold); font-size: 2.1em; }
+#title-slide p.subtitle, #title-slide .subtitle { color: var(--oa-text-on-dark); font-size: 1em; }
+#title-slide p.author, #title-slide p.date { color: var(--oa-beige); font-size: 0.7em; }
+
+.reveal section.oa-dark p, .reveal section.oa-dark li { color: var(--oa-text-on-dark); }
+.reveal section.oa-dark h1, .reveal section.oa-dark h2, .reveal section.oa-dark h3 { color: var(--oa-text-gold); }
+.reveal section.oa-dark strong { color: var(--oa-text-gold); }
+.reveal section.oa-dark a { color: var(--oa-copper-light); }
+.reveal section.oa-dark li::marker { color: var(--oa-copper-light); }
+
+/* ─── Components (use in raw HTML within slides) ─── */
+.oa-box       { border: 2px dashed var(--oa-copper); border-radius: 4px; padding: 12px 18px; margin: 10px 0; }
+.oa-box-solid { border: 2px solid var(--oa-copper); border-radius: 4px; padding: 12px 18px; margin: 10px 0; }
+.oa-key       { background: var(--oa-beige-lighter); border-left: 5px solid var(--oa-copper);
+                padding: 12px 18px; border-radius: 0 4px 4px 0; margin: 10px 0; }
+.oa-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.68em; font-weight: 600; vertical-align: middle; }
+.oa-badge.green  { background: var(--oa-green);  color: var(--oa-white); }
+.oa-badge.copper { background: var(--oa-copper); color: var(--oa-white); }
+.oa-muted { color: var(--oa-text-muted); font-size: 0.85em; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+
+/* ─── Chrome ─── */
+.reveal .progress { color: var(--oa-copper); height: 4px; }
+.reveal .slide-number { background: transparent; color: var(--oa-text-muted); font-family: var(--oa-font-sans); }
+.reveal .controls { color: var(--oa-copper); }
+.reveal .slides section .fragment.visible { opacity: 1; }
+.reveal .slides > section:first-child > *:first-child { margin-top: 0; }

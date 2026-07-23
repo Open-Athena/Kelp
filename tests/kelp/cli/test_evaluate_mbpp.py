@@ -6,7 +6,20 @@
 from etils import epath
 
 from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
-from kelp.cli.evaluate_mbpp import _checkpoint_step
+from kelp.cli.evaluate_mbpp import _checkpoint_step, run_mbpp_test
+
+
+def test_run_mbpp_test_times_out_nonterminating_candidate():
+    """A non-terminating candidate must fail the test within the wall-clock limit,
+    not hang the eval (the vet-cond-v2 failure that lost 17/50 tasks). Uses a
+    short timeout so the test itself stays fast."""
+    infinite = "def f():\n    while True:\n        pass"
+    assert run_mbpp_test(infinite, "assert f() == 1", timeout_s=0.3) is False
+
+
+def test_run_mbpp_test_passes_correct_program():
+    """A correct, fast program still passes (the timeout doesn't false-fail it)."""
+    assert run_mbpp_test("def add(a, b):\n    return a + b", "assert add(2, 3) == 5", timeout_s=5.0) is True
 
 
 def test_checkpoint_step_parses_step_dir():

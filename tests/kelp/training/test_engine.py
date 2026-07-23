@@ -282,3 +282,23 @@ def test_train_edit_model_runs(bank, tokenizer, model_cfg, train_cfg):
     # Loss should be finite for all logged steps.
     for step, m in logged_metrics:
         assert m["loss"] > 0 and m["loss"] < 100, f"Bad loss at step {step}: {m['loss']}"
+
+
+def test_train_survives_wandb_init_failure(bank, tokenizer, train_cfg, monkeypatch):
+    """A W&B init failure (e.g. a missing API key -> wandb UsageError) must NOT
+    crash training -- it degrades to logs-only. Regression for the exp10 launch
+    where a missing WANDB_API_KEY killed the run at startup (only ImportError was
+    caught)."""
+    from dataclasses import replace
+
+    import wandb
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("No API key configured")  # stand-in for wandb.UsageError
+
+    monkeypatch.setattr(wandb, "init", _boom)
+    cfg = replace(train_cfg, wandb_project="kelp")  # enable the W&B code path
+    data_iter = create_edit_data_iter(corpus=CORPUS, bank=bank, tokenizer=tokenizer, config=cfg)
+
+    params = train_edit_model(config=cfg, data_iter=data_iter)
+    assert isinstance(params, EditModelParams)  # training completed despite the failure
