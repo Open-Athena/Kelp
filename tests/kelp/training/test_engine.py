@@ -291,7 +291,7 @@ def test_train_survives_wandb_init_failure(bank, tokenizer, train_cfg, monkeypat
     caught)."""
     from dataclasses import replace
 
-    import wandb
+    wandb = pytest.importorskip("wandb")  # not a declared dep; arrives transitively
 
     def _boom(*args, **kwargs):
         raise RuntimeError("No API key configured")  # stand-in for wandb.UsageError

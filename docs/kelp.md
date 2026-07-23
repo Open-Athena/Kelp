@@ -1,5 +1,11 @@
 # Kelp: Tree Diffusion for Program Synthesis
 
+> **HISTORICAL (superseded 2026-07-23).** This is the original project
+> proposal, kept for the record. The project as built diverged substantially
+> (from-scratch 10M–305M models, MBPP corruption-repair eval, Iris/TPU infra;
+> no Marin-8B transfer, quine dataset, or HumanEval yet). The current design
+> and milestones are in [kelp_v2.md](kelp_v2.md) (chainlink #146).
+
 ## Overview
 
 Kelp is a novel research project that bridges three research directions:

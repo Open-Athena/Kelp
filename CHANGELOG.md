@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Spec conditioning first increment: SPEC tokens, doctest-derived assert specs, --p-spec, MBPP asserts as eval spec (#147)
+- Bootstrap CIs over tasks + tasks-fully-repaired metric in the MBPP eval; deconfound grid runbook `eval_deconfound.sh` (#142)
+- Expose `--p-random` (previously a silent 0.2 constant) + exp11 multi-step training runbook (#143)
+- `tpu_vet_300m` preset (~305M, bf16 + gradient checkpointing) and exp10 train/eval/status runbooks (exp10 branch; retro-logged per #145)
+- Design doc v2 with milestones M0–M6 (`docs/kelp_v2.md`), tracked as chainlink milestones (#146)
 - Raise realistic-corruption coverage with direct AST operator-flip mutations (#140)
 - Add corruption difficulty controls with curriculum scheduling to training pipeline (#78)
 - Add e-graph augmentation using egglog equality saturation for principled expression variant generation (#62, #63, #64)
@@ -55,6 +60,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Remove dead code: freeze_embeddings and freeze_attention config options (#8)
 
 ### Fixed
+- Eval timeout is escapable: SIGALRM swallowed by candidate try/except; move MBPP test execution to a subprocess (#141)
+- W&B init failure (missing/invalid API key) no longer crashes training; degrades to logs-only (exp10 branch; retro-logged per #145)
+- exp10 runbook checkpoint interval now matches the recorded runs (2000, not 5000); stale `train_exp10_300m.sh` reference in presets (#145)
+- README v10 post-review addendum: exp10 conclusions marked preliminary; single-edit rationale corrected (#142, #143)
 - Fix no-op bias: prefer edited candidates over unchanged programs in beam search (#58)
 - Fix catastrophic corruption: skip root-level AST nodes during mutation (#57)
 - Fix eval contamination in the training dataset. (#56)

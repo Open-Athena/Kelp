@@ -212,7 +212,7 @@ def tpu_vet_300m_preset() -> ModelPreset:
     head_dim held at 64 (16 heads). MHA (num_kv_heads == num_heads) to keep the
     capacity comparison against the 115M ``tpu_vet`` clean. batch_size and LR are
     held at the ``tpu_vet`` values on purpose so exp10 varies *only* capacity
-    (and the single-edit task) -- see scripts/train_exp10_300m.sh.
+    (and the single-edit task) -- see scripts/train_exp10.sh.
     """
     return ModelPreset(
         name="tpu_vet_300m",

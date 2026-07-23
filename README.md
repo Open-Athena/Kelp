@@ -600,6 +600,11 @@ Kelp is an open research project, originally incubated within the [Marin project
 
 ### Roadmap
 
+> The current design and milestone plan (M0–M6: eval trust → multi-step
+> diffusion → spec conditioning → execution-in-the-loop → real bugs/data →
+> capacity → agent) lives in [docs/kelp_v2.md](docs/kelp_v2.md), tracked as
+> chainlink milestones. The list below predates it and is kept for context.
+
 **Near-term (validating prompt conditioning):**
 - Analyze v7 results to measure the impact of prompt conditioning on exact match and test pass rates
 - Improve edit position prediction accuracy — the model often picks the right replacement but the wrong location (see `inference/beam_search.py`)
