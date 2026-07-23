@@ -139,6 +139,15 @@ def parse_args() -> argparse.Namespace:
         "IGNORED when --no-bank-swap-fallback is set (the cascade is then always attempted).",
     )
     parser.add_argument(
+        "--p-random",
+        type=float,
+        default=0.2,
+        help="Probability that an example's input is a random OTHER corpus program instead of a "
+        "forward-corrupted one, training long-range repair paths (the tree-diffusion paper's "
+        "rho-mixture; default: 0.2). Previously a silent constant -- every prior run used 0.2 "
+        "regardless of the runbook's description (issue #143). 0.0 disables the mixture.",
+    )
+    parser.add_argument(
         "--no-bank-swap-fallback",
         dest="allow_bank_swap",
         action="store_false",
@@ -260,6 +269,7 @@ def main():
         curriculum_warmup_fraction=args.curriculum_warmup_fraction,
         p_prompt=args.p_prompt,
         p_near_miss=args.p_near_miss,
+        p_random=args.p_random,
         allow_bank_swap=args.allow_bank_swap,
     )
 
