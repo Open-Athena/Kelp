@@ -123,16 +123,16 @@ Two inference strategies:
 ### Evaluation
 
 Held-out MBPP programs are corrupted with the same operator the training data
-uses, then repaired with best-of-N rollouts. Metrics, most honest first:
+uses, then repaired with best-of-N rollouts. The metrics are:
 
 1. **Tasks fully repaired** ("solved"): some candidate passes *every* assert.
-   The headline metric since the M0 overhaul (issue #142).
+   The headline metric since the eval-rigor overhaul (kelp_v2.md M0).
 2. **Best-of-16 / avg test pass rate**: partial credit over asserts. Useful,
    but max-over-candidates selection inflates it — never report it alone.
 3. **Syntactic validity / exact match**: validity is a solved invariant
    (100% at every scale); exact match detects memorization.
 
-Protocol (issues #141/#142): generated candidates execute in a **sandboxed
+Protocol (the M0 eval-trust work): generated candidates execute in a **sandboxed
 subprocess with a hard kill-on-timeout** (an in-process timeout is escapable
 by candidate code and once cost a run 17/50 tasks); every aggregate carries a
 **task-level bootstrap 95% CI**; headline numbers use **n=500 tasks** — the
@@ -178,10 +178,10 @@ The first training runs used a hardcoded corpus of 15 simple Python functions (`
 - Corpus diversity is the bottleneck, not model capacity
 
 **Bugs found and fixed:**
-- Catastrophic corruption: root-level AST mutations destroyed entire programs (#57)
-- No-op bias: beam search always selected unchanged programs over edited ones (#58)
-- Eval contamination: training data included eval task programs (#56)
-- Tiny eval-time subtree bank (35 entries) made repair nearly impossible (#52)
+- Catastrophic corruption: root-level AST mutations destroyed entire programs
+- No-op bias: beam search always selected unchanged programs over edited ones
+- Eval contamination: training data included eval task programs
+- Tiny eval-time subtree bank (35 entries) made repair nearly impossible
 
 ### v4: Toy Corpus + E-Graph Augmentation
 
@@ -420,7 +420,7 @@ the model actually repairs at inference. Two changes on top of v9:
    curriculum). Tree diffusion repairs iteratively — one edit per step, then
    re-check — so a single-edit target *is* the per-step objective. This removes a
    train/inference mismatch and sharpens the localization signal.
-2. **A held-cost capacity test.** The performance work (issue #132: real bf16 +
+2. **A held-cost capacity test.** The performance work (real bf16 +
    fused splash attention + gradient checkpointing) makes a **~305M** model
    (`tpu_vet_300m`) fit the v6e-4 and train at ~the same wall-clock as the 115M.
    We also ran a **115M single-edit control** so the v9→v10 delta separates
@@ -446,7 +446,7 @@ corruption-steps=1, matched to single-edit training):**
 | Tasks evaluated (matched / unmatched) | 48 / 50 | 48 / 50 |
 
 The eval **no longer hangs**: `run_mbpp_test` now bounds each candidate with a 5s
-execution timeout (issue #134-related), so a non-terminating repair fails its
+execution timeout, so a non-terminating repair fails its
 test instead of stalling the run (v9 lost 17/50 this way). The 2 matched tasks
 not evaluated had no valid single-edit corruption and were dropped, not hung.
 
@@ -462,7 +462,7 @@ not evaluated had no valid single-edit corruption and were dropped, not hung.
 - **Matched ≈ unmatched again** (18.8% vs 18.7% at 305M) — a robust, *general*
   repair skill, not corruption-overfit, consistent with v9.
 
-**Post-review addendum (2026-07-23, issues #142/#143):** treat the two
+**Post-review addendum (2026-07-23):** treat the two
 conclusions above as *preliminary*. (1) At n≈50 tasks the standard error is
 roughly 5pp, so the +1.4pp capacity delta AND the +3pp "floor lift" are both
 inside the noise — the eval now reports bootstrap CIs and a tasks-fully-repaired
@@ -479,13 +479,13 @@ redesign that follows from this.
 
 **Next steps:**
 - **exp11 targets the repair loop, not the model.** Edit-position calibration
-  (issue #138: constrain decoding to valid AST boundaries), execution-guided
+  (constraining decoding to valid AST boundaries), execution-guided
   search depth, and constrained decoding — where the 15→18%→*higher* gains live.
 - **Validation-during-training** — measure held-out repair rate every few
   thousand steps (token loss saturates and hides the metric that matters),
   enabling early stopping and live capacity readouts.
 - **Infra hardened this cycle** (all landed): real bf16 compute, fused splash
-  attention, MFU logging (issue #132); preemption-resilient checkpointing; a
+  attention, MFU logging; preemption-resilient checkpointing; a
   non-hanging eval; and BATCH-band scheduling by default.
 
 ## Project Structure
