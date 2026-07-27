@@ -35,6 +35,30 @@ Long-term, the project aims to:
 2. **Scale from scratch to transfer**: train small models from scratch first, then adapt pretrained LLMs (Marin 8B) into tree diffusion models
 3. **Demonstrate scaling laws**: measure how repair quality improves with corpus diversity, model size, and compute
 
+### Relation to the source paper (design v2)
+
+Kelp scales [Kapur, Jenner & Russell (2024)](https://arxiv.org/abs/2405.20519)
+from 8-primitive inverse-graphics DSLs to real Python. Each of the paper's
+load-bearing components has a Python analog; the honest status of each is the
+map of the project:
+
+| Paper | Kelp | Status |
+|---|---|---|
+| Small subtree mutations, s ~ U[1,5] | Realistic in-context corruption, multi-step | ✅ (multi-step restored in exp11) |
+| Reverse-path single-step targets | `tree_diff` path, random-step supervision | ✅ |
+| ρ-mixture of random inits (long-range) | `--p-random` random-program pairs | ✅ (now explicit) |
+| Goal observation x₀ (target image) | Spec: test asserts / I-O + NL intent | 🟡 spec blocks landed, unproven (M2) |
+| Execution feedback x_t (current render) | Run tests per edit; feed back failures | ❌ the known frontier (M3) |
+| Grammar-masked decoding | Byte+position decode, AST position masks | 🟡 validity 100%; position constraint optional |
+| % solved vs. compute | Tasks fully repaired, CIs, n=500 | ✅ (as of the M0 eval overhaul) |
+
+The missing middle rows are the working explanation for the project's core
+result so far: **100% syntactic validity with low semantic correctness**. A
+model that never observes the spec or its own execution output can localize
+and produce valid edits but must guess intended behavior. Closing that gap —
+not capacity, which measured flat at n=500 — is the current direction. Full
+design, milestones (M0–M6), and kill criteria: [docs/kelp_v2.md](docs/kelp_v2.md).
+
 ## Architecture
 
 ### The Pipeline
@@ -98,11 +122,24 @@ Two inference strategies:
 
 ### Evaluation
 
-Programs are evaluated by:
+Held-out MBPP programs are corrupted with the same operator the training data
+uses, then repaired with best-of-N rollouts. Metrics, most honest first:
 
-1. **Syntactic validity**: does the output parse as Python?
-2. **Exact match**: is the output identical to the original?
-3. **Test pass rate**: does the output pass the test cases? (execution-guided reranking selects the best candidate)
+1. **Tasks fully repaired** ("solved"): some candidate passes *every* assert.
+   The headline metric since the M0 overhaul (issue #142).
+2. **Best-of-16 / avg test pass rate**: partial credit over asserts. Useful,
+   but max-over-candidates selection inflates it — never report it alone.
+3. **Syntactic validity / exact match**: validity is a solved invariant
+   (100% at every scale); exact match detects memorization.
+
+Protocol (issues #141/#142): generated candidates execute in a **sandboxed
+subprocess with a hard kill-on-timeout** (an in-process timeout is escapable
+by candidate code and once cost a run 17/50 tasks); every aggregate carries a
+**task-level bootstrap 95% CI**; headline numbers use **n=500 tasks** — the
+first-50 MBPP tasks are a *biased* subsample, not a noisy one (they under-read
+best-of-16 by ~14pp in the exp10 deconfound). Matched vs unmatched corruption
+arms and a corruption-steps sweep separate training effects from eval
+difficulty; `scripts/eval_deconfound.sh` runs the grid.
 
 ## Model Presets
 
@@ -536,14 +573,18 @@ JAX_PLATFORMS=cpu uv run python -m kelp.cli.train \
   --corpus-file corpus.txt \
   --checkpoint-interval 2000 --output-dir checkpoints/kelp-edit
 
-# GPU with prompt conditioning + corruption curriculum (v7 recipe)
+# Current recipe (exp11): multi-step realistic corruption + prompt conditioning.
+# --p-random (long-range ρ-mixture) and --spec-conditioning/--p-spec (assert
+# spec blocks, M2) are the newest knobs; see scripts/train_exp11.sh for the
+# TPU runbook with the full flag rationale.
 uv run python -m kelp.cli.train \
   --preset overnight_cpu --steps 50000 --augment \
   --corpus-file corpus_v7.txt \
   --prompt-conditioning --p-prompt 0.5 \
-  --corruption-curriculum linear \
+  --p-near-miss 1.0 --no-bank-swap-fallback \
+  --max-corruption-steps 3 --p-random 0.2 \
   --wandb-project kelp --wandb-run-name my-run \
-  --checkpoint-interval 5000 --output-dir checkpoints/kelp-edit-v7
+  --checkpoint-interval 2000 --output-dir checkpoints/kelp-edit
 ```
 
 ### Evaluate
