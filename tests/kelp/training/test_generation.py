@@ -122,3 +122,32 @@ def _model_cfg_for_test():
         num_kv_heads=2,
         max_seq_len=MAX_SEQ_LEN,
     )
+
+
+def test_spec_conditioning_threads_through_generation(bank):
+    """With a spec_tokens tokenizer and p_spec at the boundaries, a doctest'd
+    clean program deterministically does/doesn't get a spec block, and the spec
+    never carries loss (it is conditioning, not target)."""
+    tok = EditTokenizer(max_seq_len=MAX_SEQ_LEN, prompt_tokens=True, spec_tokens=True)
+    doctested = 'def add(a, b):\n    """Add.\n\n    >>> add(1, 2)\n    3\n    """\n    return a + b\n'
+    corpus = [doctested] + CORPUS[1:]
+
+    def gen(p_spec, seed):
+        return generate_example(
+            doctested,
+            corpus,
+            bank,
+            tok,
+            max_corruption_steps=3,
+            gen_cfg=GenerationConfig(p_spec=p_spec, p_random=0.0),
+            rng=random.Random(seed),
+            max_seq_len=MAX_SEQ_LEN,
+        )
+
+    ex = next(e for e in (gen(1.0, s) for s in range(20)) if e is not None)
+    assert ex.spec_used
+    assert tok.spec_start_token_id in ex.token_ids
+    assert ex.loss_mask[ex.token_ids.index(tok.spec_end_token_id)] == 0
+
+    ex_off = next(e for e in (gen(0.0, s) for s in range(20)) if e is not None)
+    assert not ex_off.spec_used and tok.spec_start_token_id not in ex_off.token_ids

@@ -3,6 +3,9 @@
 
 """Tests for MBPP eval helpers and the shared resume store."""
 
+import time
+
+import pytest
 from etils import epath
 
 from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
@@ -20,6 +23,41 @@ def test_run_mbpp_test_times_out_nonterminating_candidate():
 def test_run_mbpp_test_passes_correct_program():
     """A correct, fast program still passes (the timeout doesn't false-fail it)."""
     assert run_mbpp_test("def add(a, b):\n    return a + b", "assert add(2, 3) == 5", timeout_s=5.0) is True
+
+
+def test_timeout_cannot_be_swallowed_by_candidate_exception_handler():
+    """Regression for #141: the old in-process SIGALRM timeout was escapable by a
+    candidate whose hot loop sits inside try/except (the handler's exception got
+    swallowed, the timer was disarmed, and the eval hung forever). A subprocess
+    kill cannot be caught, so this candidate must fail within the limit."""
+    swallower = (
+        "def f():\n"
+        "    while True:\n"
+        "        try:\n"
+        "            for _ in range(10**6):\n"
+        "                n = 1\n"
+        "        except BaseException:\n"
+        "            n = 2\n"
+    )
+    start = time.monotonic()
+    assert run_mbpp_test(swallower, "assert f() == 1", timeout_s=0.3) is False
+    assert time.monotonic() - start < 10.0  # bounded by the timeout + kill, not the loop
+
+
+def test_runner_recovers_after_worker_death():
+    """A candidate that kills the worker outright (os._exit bypasses all exception
+    handling) fails its test, and the next test still runs correctly on a fresh
+    worker -- one bad candidate must not poison the rest of the eval."""
+    assert run_mbpp_test("import os\nos._exit(0)", "assert True", timeout_s=5.0) is False
+    assert run_mbpp_test("def g():\n    return 1", "assert g() == 1", timeout_s=5.0) is True
+
+
+def test_candidate_stdio_cannot_corrupt_the_verdict():
+    """Candidate prints must not corrupt the worker protocol (fds are re-pointed
+    at devnull), and a candidate reading stdin must fail fast (EOF), not block."""
+    noisy = "def h():\n    print('1')\n    print('garbage')\n    return 3"
+    assert run_mbpp_test(noisy, "assert h() == 3", timeout_s=5.0) is True
+    assert run_mbpp_test("x = input()", "assert True", timeout_s=2.0) is False
 
 
 def test_checkpoint_step_parses_step_dir():
@@ -58,3 +96,17 @@ def test_results_persist_and_reload_for_resume(tmp_path):
     loaded = load_completed(shards, "task_id")
     assert set(loaded) == {7, 42}
     assert loaded[7]["avg_test_pass_rate"] == 0.5
+
+
+def test_broken_worker_environment_fails_loudly(monkeypatch):
+    """A worker that cannot start (e.g. 'kelp' unimportable on a cluster image)
+    must raise, not report False for every test -- an eval of silent zeros is
+    worse than a crash (#141 hardening for remote launches)."""
+    import sys
+
+    from kelp.cli import _test_runner
+
+    monkeypatch.setattr(_test_runner, "_worker_argv", lambda: [sys.executable, "-c", "import nonexistent_pkg"])
+    runner = _test_runner.SubprocessTestRunner()
+    with pytest.raises(RuntimeError, match="startup probe"):
+        runner.run("x = 1", "assert x == 1", timeout_s=5.0)

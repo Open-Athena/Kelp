@@ -45,7 +45,9 @@ CORRUPTION_CURRICULUM="${CORRUPTION_CURRICULUM:-constant}"
 # applies rather than grafting an alien bank subtree (exp9's key fix).
 P_NEAR_MISS="${P_NEAR_MISS:-1.0}"
 P_PROMPT="${P_PROMPT:-0.5}"
-CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-5000}"
+# 2000, not 5000: what the recorded exp10 runs actually used after preemption
+# thrash (README v10) -- the step-48000 eval checkpoint only exists at 2000.
+CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-2000}"
 SEED="${SEED:-42}"
 WANDB_PROJECT="${WANDB_PROJECT:-kelp}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-exp10-300m}"

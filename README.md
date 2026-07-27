@@ -35,6 +35,30 @@ Long-term, the project aims to:
 2. **Scale from scratch to transfer**: train small models from scratch first, then adapt pretrained LLMs (Marin 8B) into tree diffusion models
 3. **Demonstrate scaling laws**: measure how repair quality improves with corpus diversity, model size, and compute
 
+### Relation to the source paper (design v2)
+
+Kelp scales [Kapur, Jenner & Russell (2024)](https://arxiv.org/abs/2405.20519)
+from 8-primitive inverse-graphics DSLs to real Python. Each of the paper's
+primary components has a Python analog; the current status of each is the
+map of the project:
+
+| Paper | Kelp | Status |
+|---|---|---|
+| Small subtree mutations, s ~ U[1,5] | Realistic in-context corruption, multi-step | ✅ (multi-step restored in exp11) |
+| Reverse-path single-step targets | `tree_diff` path, random-step supervision | ✅ |
+| ρ-mixture of random inits (long-range) | `--p-random` random-program pairs | ✅ (now explicit) |
+| Goal observation x₀ (target image) | Spec: test asserts / I-O + NL intent | 🟡 spec blocks landed, unproven (M2) |
+| Execution feedback x_t (current render) | Run tests per edit; feed back failures | ❌ the known frontier (M3) |
+| Grammar-masked decoding | Byte+position decode, AST position masks | 🟡 validity 100%; position constraint optional |
+| % solved vs. compute | Tasks fully repaired, CIs, n=500 | ✅ (as of the M0 eval overhaul) |
+
+The missing middle rows are the working explanation for the project's core
+result so far: **100% syntactic validity with low semantic correctness**. A
+model that never observes the spec or its own execution output can localize
+and produce valid edits but must guess intended behavior. Closing that gap —
+not capacity, which measured flat at n=500 — is the current direction. Full
+design, milestones (M0–M6), and kill criteria: [docs/kelp_v2.md](docs/kelp_v2.md).
+
 ## Architecture
 
 ### The Pipeline
@@ -98,11 +122,24 @@ Two inference strategies:
 
 ### Evaluation
 
-Programs are evaluated by:
+Held-out MBPP programs are corrupted with the same operator the training data
+uses, then repaired with best-of-N rollouts. The metrics are:
 
-1. **Syntactic validity**: does the output parse as Python?
-2. **Exact match**: is the output identical to the original?
-3. **Test pass rate**: does the output pass the test cases? (execution-guided reranking selects the best candidate)
+1. **Tasks fully repaired** ("solved"): some candidate passes *every* assert.
+   The headline metric since the eval-rigor overhaul (kelp_v2.md M0).
+2. **Best-of-16 / avg test pass rate**: partial credit over asserts. Useful,
+   but max-over-candidates selection inflates it — never report it alone.
+3. **Syntactic validity / exact match**: validity is a solved invariant
+   (100% at every scale); exact match detects memorization.
+
+Protocol (the M0 eval-trust work): generated candidates execute in a **sandboxed
+subprocess with a hard kill-on-timeout** (an in-process timeout is escapable
+by candidate code and once cost a run 17/50 tasks); every aggregate carries a
+**task-level bootstrap 95% CI**; headline numbers use **n=500 tasks** — the
+first-50 MBPP tasks are a *biased* subsample, not a noisy one (they under-read
+best-of-16 by ~14pp in the exp10 deconfound). Matched vs unmatched corruption
+arms and a corruption-steps sweep separate training effects from eval
+difficulty; `scripts/eval_deconfound.sh` runs the grid.
 
 ## Model Presets
 
@@ -141,10 +178,10 @@ The first training runs used a hardcoded corpus of 15 simple Python functions (`
 - Corpus diversity is the bottleneck, not model capacity
 
 **Bugs found and fixed:**
-- Catastrophic corruption: root-level AST mutations destroyed entire programs (#57)
-- No-op bias: beam search always selected unchanged programs over edited ones (#58)
-- Eval contamination: training data included eval task programs (#56)
-- Tiny eval-time subtree bank (35 entries) made repair nearly impossible (#52)
+- Catastrophic corruption: root-level AST mutations destroyed entire programs
+- No-op bias: beam search always selected unchanged programs over edited ones
+- Eval contamination: training data included eval task programs
+- Tiny eval-time subtree bank (35 entries) made repair nearly impossible
 
 ### v4: Toy Corpus + E-Graph Augmentation
 
@@ -383,7 +420,7 @@ the model actually repairs at inference. Two changes on top of v9:
    curriculum). Tree diffusion repairs iteratively — one edit per step, then
    re-check — so a single-edit target *is* the per-step objective. This removes a
    train/inference mismatch and sharpens the localization signal.
-2. **A held-cost capacity test.** The performance work (issue #132: real bf16 +
+2. **A held-cost capacity test.** The performance work (real bf16 +
    fused splash attention + gradient checkpointing) makes a **~305M** model
    (`tpu_vet_300m`) fit the v6e-4 and train at ~the same wall-clock as the 115M.
    We also ran a **115M single-edit control** so the v9→v10 delta separates
@@ -409,7 +446,7 @@ corruption-steps=1, matched to single-edit training):**
 | Tasks evaluated (matched / unmatched) | 48 / 50 | 48 / 50 |
 
 The eval **no longer hangs**: `run_mbpp_test` now bounds each candidate with a 5s
-execution timeout (issue #134-related), so a non-terminating repair fails its
+execution timeout, so a non-terminating repair fails its
 test instead of stalling the run (v9 lost 17/50 this way). The 2 matched tasks
 not evaluated had no valid single-edit corruption and were dropped, not hung.
 
@@ -425,16 +462,74 @@ not evaluated had no valid single-edit corruption and were dropped, not hung.
 - **Matched ≈ unmatched again** (18.8% vs 18.7% at 305M) — a robust, *general*
   repair skill, not corruption-overfit, consistent with v9.
 
+**Post-review addendum (2026-07-23):** treat the two
+conclusions above as *preliminary*. (1) At n≈50 tasks the standard error is
+roughly 5pp, so the +1.4pp capacity delta AND the +3pp "floor lift" are both
+inside the noise — the eval now reports bootstrap CIs and a tasks-fully-repaired
+metric, and the 500-task deconfounding grid
+([scripts/eval_deconfound.sh](scripts/eval_deconfound.sh)) is the run that can
+actually settle both claims. (2) The single-edit rationale as stated is wrong
+about our own pipeline: the training *target* was always a single path-step edit
+(`training/generation.py`); `--max-corruption-steps 1` narrowed the *input state
+distribution* to states one edit from clean — the opposite of the paper's
+reverse-path recipe — while inference remains a 10-step iterative loop. What
+single-edit training cost in multi-error repair is unmeasured until the
+steps=2,3 cells of the grid run. See [docs/kelp_v2.md](docs/kelp_v2.md) for the
+redesign that follows from this.
+
 **Next steps:**
 - **exp11 targets the repair loop, not the model.** Edit-position calibration
-  (issue #138: constrain decoding to valid AST boundaries), execution-guided
+  (constraining decoding to valid AST boundaries), execution-guided
   search depth, and constrained decoding — where the 15→18%→*higher* gains live.
 - **Validation-during-training** — measure held-out repair rate every few
   thousand steps (token loss saturates and hides the metric that matters),
   enabling early stopping and live capacity readouts.
 - **Infra hardened this cycle** (all landed): real bf16 compute, fused splash
-  attention, MFU logging (issue #132); preemption-resilient checkpointing; a
+  attention, MFU logging; preemption-resilient checkpointing; a
   non-hanging eval; and BATCH-band scheduling by default.
+
+### v11: The deconfound grid + multi-step training (`exp11`) — training recipe doesn't matter; conditioning is the live hypothesis
+
+The adversarial review (see [docs/kelp_v2.md](docs/kelp_v2.md)) argued exp10's
+conclusions were confounded (training AND eval difficulty changed together) and
+underpowered (n≈50). v11 settled both questions properly: every checkpoint ×
+every corruption depth, on the same 500 tasks, same seed, with a hardened
+(kill-on-timeout, sandboxed-subprocess) eval and bootstrap CIs. It also trained
+**exp11**: the paper-faithful multi-step recipe (s ~ U[1,3], reverse-path
+targets, explicit `--p-random 0.2`), all else held at exp10-control values.
+
+**Evaluation (MBPP held out; step-50000; best-of-16; matched arm; n=496–493):**
+
+| Tasks fully repaired [95% CI] | steps=1 | steps=2 | steps=3 |
+|---|---|---|---|
+| v9 `vet-cond-v2` (multi-step ≤2) | 22.0% [18.5, 26.0] | 7.5% [5.3, 9.9] | 12.1% [9.3, 15.1] |
+| exp10 115M (single-edit) | 22.0% [18.5, 26.0] | 7.5% [5.3, 9.9] | 12.1% [9.5, 15.1] |
+| exp10 305M (single-edit) | 22.4% [19.0, 26.4] | 7.1% [4.9, 9.5] | 11.9% [9.1, 14.7] |
+| exp11 115M (multi-step ≤3) | 22.0% [18.5, 25.8] | 7.9% [5.7, 10.3] | 12.1% [9.3, 15.1] |
+
+**What we learned:**
+- **The training recipe is irrelevant at this scale/data — a clean negative
+  result.** Single-edit, ≤2-step, and ≤3-step training are statistically
+  indistinguishable at *every* eval depth, and it's not just equal counts:
+  the models solve essentially the **same task sets** (107/109 overlap at
+  steps=1). Repairability is a property of the (task, corruption) pair, not
+  the model variant. The kelp_v2.md M1 kill criterion fired as designed.
+- **Capacity is genuinely flat, now with power**: 305M vs 115M differs by
+  <1pp at every depth at n≈500 — exp10's directional claim, finally supported.
+- **exp10's "single-edit lifted the floor" is retracted**: under matched
+  conditions the lift vanishes entirely; the old 15→18% was the easier eval.
+  Relatedly, the old 50-task numbers were *biased* low, not just noisy
+  (~18.8% vs ~33% best-of-16 at n=500): the first-50 MBPP slice is not a
+  random sample.
+- **Difficulty is non-monotonic in corruption steps** (steps=2 is harder than
+  steps=3) — corruption cancellation in the cascade is worth understanding
+  before interpreting any steps-sweep.
+- **Every training run saturates** (loss ~0.03, acc ~99%) while repair sits at
+  22%. The models have learned the training task; the training task doesn't
+  contain the information repair needs. All process-side levers (capacity,
+  corruption recipe, corpus realism) are now measured flat — **conditioning
+  (spec + execution feedback, kelp_v2.md M2/M3) is the only untested lever**,
+  exactly as the design doc predicted.
 
 ## Project Structure
 
@@ -521,14 +616,18 @@ JAX_PLATFORMS=cpu uv run python -m kelp.cli.train \
   --corpus-file corpus.txt \
   --checkpoint-interval 2000 --output-dir checkpoints/kelp-edit
 
-# GPU with prompt conditioning + corruption curriculum (v7 recipe)
+# Current recipe (exp11): multi-step realistic corruption + prompt conditioning.
+# --p-random (long-range ρ-mixture) and --spec-conditioning/--p-spec (assert
+# spec blocks, M2) are the newest knobs; see scripts/train_exp11.sh for the
+# TPU runbook with the full flag rationale.
 uv run python -m kelp.cli.train \
   --preset overnight_cpu --steps 50000 --augment \
   --corpus-file corpus_v7.txt \
   --prompt-conditioning --p-prompt 0.5 \
-  --corruption-curriculum linear \
+  --p-near-miss 1.0 --no-bank-swap-fallback \
+  --max-corruption-steps 3 --p-random 0.2 \
   --wandb-project kelp --wandb-run-name my-run \
-  --checkpoint-interval 5000 --output-dir checkpoints/kelp-edit-v7
+  --checkpoint-interval 2000 --output-dir checkpoints/kelp-edit
 ```
 
 ### Evaluate
@@ -584,6 +683,11 @@ sharding, and monitoring details.
 Kelp is an open research project, originally incubated within the [Marin project](https://marin.community/) and now developed as a standalone repository. Contributions are welcome — here's what's ahead and how to help.
 
 ### Roadmap
+
+> The current design and milestone plan (M0–M6: eval trust → multi-step
+> diffusion → spec conditioning → execution-in-the-loop → real bugs/data →
+> capacity → agent) lives in [docs/kelp_v2.md](docs/kelp_v2.md), tracked as
+> chainlink milestones. The list below predates it and is kept for context.
 
 **Near-term (validating prompt conditioning):**
 - Analyze v7 results to measure the impact of prompt conditioning on exact match and test pass rates

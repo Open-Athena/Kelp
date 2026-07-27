@@ -38,16 +38,16 @@ import ast
 import json
 import logging
 import random
-import signal
 import sys
 import time
-from contextlib import contextmanager
 
 import jax
 from etils import epath
 
 from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
 from kelp.cli._logging import configure_logging
+from kelp.cli._stats import bootstrap_ci
+from kelp.cli._test_runner import default_runner
 from kelp.corpus import is_valid_python, load_corpus
 from kelp.inference.beam_search import best_of_n
 from kelp.model.checkpointing import find_best_checkpoint, load_checkpoint
@@ -105,60 +105,15 @@ def load_mbpp_eval_tasks(max_length: int = 512, max_tasks: int = 0) -> list[dict
     return tasks
 
 
-class _TestTimeout(Exception):
-    """Raised when a generated candidate exceeds the per-test wall-clock limit."""
-
-
-@contextmanager
-def _time_limit(seconds: float):
-    """Best-effort wall-clock limit for executing generated code.
-
-    Guards against a non-terminating candidate (e.g. ``while True``) hanging the
-    whole eval -- exactly the vet-cond-v2 failure where one task's runaway
-    candidate stalled the run and 17/50 tasks were lost. Uses SIGALRM, which is
-    main-thread + Unix only; off the main thread (or if unavailable) it degrades
-    to no limit rather than erroring. A C-level busy loop can still ignore the
-    signal, but model-generated MBPP code is pure Python and interruptible.
-    """
-    if seconds <= 0:
-        yield
-        return
-
-    def _handler(signum, frame):
-        raise _TestTimeout()
-
-    try:
-        old = signal.signal(signal.SIGALRM, _handler)
-    except ValueError:
-        # Not the main thread -> cannot arm SIGALRM; run without a limit.
-        yield
-        return
-
-    signal.setitimer(signal.ITIMER_REAL, seconds)
-    try:
-        yield
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, old)
-
-
 def run_mbpp_test(program: str, test_assert: str, setup_code: str = "", timeout_s: float = 5.0) -> bool:
     """Execute an MBPP assert-based test case against a program.
 
-    ``timeout_s`` bounds execution so a non-terminating candidate fails the test
-    instead of hanging the eval (0 disables the limit). See :func:`_time_limit`.
+    Runs in a sandboxed worker subprocess with a hard kill-on-timeout
+    (:mod:`kelp.cli._test_runner`), so a non-terminating candidate fails the
+    test instead of hanging the eval regardless of what the candidate code does
+    (0 disables the limit).
     """
-    try:
-        namespace: dict = {}
-        with _time_limit(timeout_s):
-            if setup_code:
-                exec(setup_code, namespace)
-            exec(program, namespace)
-            exec(test_assert, namespace)
-        return True
-    except Exception:
-        # Includes _TestTimeout (a non-terminating candidate) -> a failed test.
-        return False
+    return default_runner().run(program, test_assert, setup_code=setup_code, timeout_s=timeout_s)
 
 
 def evaluate_mbpp_task(
@@ -188,6 +143,11 @@ def evaluate_mbpp_task(
     tests = task["tests"]
     setup_code = task.get("setup_code", "")
     prompt = task.get("text") if tokenizer.prompt_tokens else None
+    # Spec conditioning (issue #147): the task's asserts become the model's
+    # goal-observation block. NOTE these are the same asserts that score the
+    # metric, which makes best-of-N reranking partially circular -- spec-
+    # conditioned results must be reported with and without reranking.
+    spec = "\n".join(tests) if tokenizer.spec_tokens and tests else None
     rng = random.Random(task["task_id"])
 
     total_valid = 0
@@ -225,6 +185,7 @@ def evaluate_mbpp_task(
             max_depth=max_depth,
             temperature=0.8,
             prompt=prompt,
+            spec=spec,
             constrain_position=constrain_position,
         )
 
@@ -262,6 +223,10 @@ def evaluate_mbpp_task(
         "exact_match_rate": total_exact_match / max(total_candidates, 1),
         "avg_test_pass_rate": total_test_pass_rate / max(total_trials, 1),
         "best_test_pass_rate": best_overall_pass_rate,
+        # Fully repaired: some candidate in some trial passed EVERY assert.
+        # The partial-credit rates above cannot distinguish "80% of asserts on
+        # most tasks" from "all asserts on 80% of tasks"; this can (issue #142).
+        "solved": total_trials > 0 and best_overall_pass_rate == 1.0,
         "best_candidate": best_overall_candidate.strip()[:200],
         "clean": clean.strip()[:200],
     }
@@ -427,7 +392,11 @@ def main():
     logger.info(f"Evaluating checkpoint: {ckpt_dir}")
 
     params, config = load_checkpoint(ckpt_dir)
-    tokenizer = EditTokenizer(max_seq_len=config.max_seq_len, prompt_tokens=config.prompt_tokens)
+    tokenizer = EditTokenizer(
+        max_seq_len=config.max_seq_len,
+        prompt_tokens=config.prompt_tokens,
+        spec_tokens=getattr(config, "spec_tokens", False),
+    )
 
     # Load MBPP eval tasks.
     eval_tasks = load_mbpp_eval_tasks(max_tasks=args.max_tasks)
@@ -514,6 +483,15 @@ def main():
     avg_exact = sum(r["exact_match_rate"] for r in tasks_with_trials) / len(tasks_with_trials)
     avg_test_pass = sum(r["avg_test_pass_rate"] for r in tasks_with_trials) / len(tasks_with_trials)
     avg_best_pass = sum(r["best_test_pass_rate"] for r in tasks_with_trials) / len(tasks_with_trials)
+    # "solved" may be absent in shards written before #142; derive it then.
+    solved_flags = [float(r.get("solved", r["best_test_pass_rate"] == 1.0)) for r in tasks_with_trials]
+    solved_rate = sum(solved_flags) / len(solved_flags)
+
+    # Task-level bootstrap CIs: the error bars every reported delta must clear
+    # before it becomes a conclusion (issue #142).
+    avg_pass_ci = bootstrap_ci([r["avg_test_pass_rate"] for r in tasks_with_trials], seed=args.seed)
+    best_pass_ci = bootstrap_ci([r["best_test_pass_rate"] for r in tasks_with_trials], seed=args.seed)
+    solved_ci = bootstrap_ci(solved_flags, seed=args.seed)
 
     logger.info("")
     logger.info("=" * 70)
@@ -526,12 +504,15 @@ def main():
     logger.info(f"Subtree bank: {'training corpus' if args.corpus_file else 'eval programs only'}")
     logger.info(f"Time: {elapsed:.1f}s")
     logger.info("")
-    logger.info(f"{'Metric':<30} {'Value':>10}")
-    logger.info("-" * 42)
+    logger.info(f"{'Metric':<30} {'Value':>10}  {'95% CI':>18}")
+    logger.info("-" * 62)
     logger.info(f"{'Syntactic validity rate':<30} {avg_valid:>10.1%}")
     logger.info(f"{'Exact match rate':<30} {avg_exact:>10.1%}")
-    logger.info(f"{'Avg test pass rate':<30} {avg_test_pass:>10.1%}")
-    logger.info(f"{'Best test pass rate':<30} {avg_best_pass:>10.1%}")
+    logger.info(f"{'Avg test pass rate':<30} {avg_test_pass:>10.1%}  [{avg_pass_ci[0]:>6.1%}, {avg_pass_ci[1]:>6.1%}]")
+    logger.info(
+        f"{'Best test pass rate':<30} {avg_best_pass:>10.1%}  [{best_pass_ci[0]:>6.1%}, {best_pass_ci[1]:>6.1%}]"
+    )
+    logger.info(f"{'Tasks fully repaired':<30} {solved_rate:>10.1%}  [{solved_ci[0]:>6.1%}, {solved_ci[1]:>6.1%}]")
     logger.info("=" * 70)
 
     if args.wandb_project:
@@ -541,6 +522,7 @@ def main():
             {
                 "mbpp_avg_pass_rate": avg_test_pass,
                 "mbpp_best_pass_rate": avg_best_pass,
+                "mbpp_solved_rate": solved_rate,
                 "syntactic_validity": avg_valid,
                 "exact_match": avg_exact,
                 "tasks_evaluated": len(tasks_with_trials),
@@ -567,7 +549,11 @@ def main():
             "syntactic_validity": avg_valid,
             "exact_match": avg_exact,
             "avg_test_pass_rate": avg_test_pass,
+            "avg_test_pass_rate_ci95": list(avg_pass_ci),
             "best_test_pass_rate": avg_best_pass,
+            "best_test_pass_rate_ci95": list(best_pass_ci),
+            "solved_rate": solved_rate,
+            "solved_rate_ci95": list(solved_ci),
         },
         "per_task": all_results,
         "elapsed_seconds": elapsed,

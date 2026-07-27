@@ -26,7 +26,7 @@ import random as pyrandom
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from kelp.corpus import extract_docstring
+from kelp.corpus import extract_docstring, extract_spec_asserts
 from kelp.tree.corruption import corrupt_realistic
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
@@ -49,6 +49,12 @@ class GenerationConfig:
     p_prompt: float = 0.5
     """Probability of including a docstring prompt when one is available."""
 
+    p_spec: float = 0.5
+    """Probability of including a doctest-derived assert spec when one is
+    available (requires a spec_tokens tokenizer; kelp_v2.md M2, issue #147).
+    Independent of ``p_prompt`` so the {none, NL, spec, NL+spec} ablation grid
+    falls out of the two dropouts."""
+
     p_near_miss: float = 0.0
     """On the forward-diffusion branch, probability of corrupting with an e-graph
     near-miss (a realistic in-context operator-flip bug) instead of a bank
@@ -68,6 +74,7 @@ class GenerationConfig:
             max_edit_stmts=config.max_edit_stmts,
             p_random=config.p_random,
             p_prompt=config.p_prompt,
+            p_spec=config.p_spec,
             p_near_miss=config.p_near_miss,
             allow_bank_swap=config.allow_bank_swap,
         )
@@ -90,6 +97,9 @@ class TrainingExample:
     """True if the p_random branch (random corpus program) was taken."""
     prompt_used: bool
     """True if a docstring prompt was prepended."""
+
+    spec_used: bool = False
+    """True if a doctest-derived assert spec was prepended (issue #147)."""
 
 
 def generate_example(
@@ -177,11 +187,21 @@ def generate_example(
         if docstring and rng.random() < gen_cfg.p_prompt:
             prompt_source = docstring
 
+    # Optionally include a doctest-derived assert spec from the *clean* source
+    # (the goal-observation conditioning of kelp_v2.md M2). Independent draw
+    # from the prompt so the conditioning ablation grid is trainable.
+    spec_source: str | None = None
+    if tokenizer.spec_tokens:
+        spec = extract_spec_asserts(clean_source)
+        if spec and rng.random() < gen_cfg.p_spec:
+            spec_source = spec
+
     token_ids, loss_mask = tokenizer.encode_training_example(
         context_source=intermediate,
         edit_position_token_idx=edit_token_idx,
         replacement_source=target_mutation.replacement,
         prompt_source=prompt_source,
+        spec_source=spec_source,
     )
 
     # Skip if too long.
@@ -194,4 +214,5 @@ def generate_example(
         corruption_steps=corruption_steps,
         is_random=is_random,
         prompt_used=prompt_source is not None,
+        spec_used=spec_source is not None,
     )

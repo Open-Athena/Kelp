@@ -64,6 +64,13 @@ class EditTokenizer:
         4              : <PROMPT_END>
         5 .. 5+N-1     : <POS 0> .. <POS N-1>  (position tokens)
         5+N .. 5+N+B-1 : base vocabulary tokens (characters/bytes)
+
+    Token ID layout (spec_tokens=True, implies prompt_tokens=True):
+        0-4 as above, then
+        5              : <SPEC_START>
+        6              : <SPEC_END>
+        7 .. 7+N-1     : <POS 0> .. <POS N-1>  (position tokens)
+        7+N .. 7+N+B-1 : base vocabulary tokens (characters/bytes)
     """
 
     max_seq_len: int
@@ -75,9 +82,21 @@ class EditTokenizer:
     prompt_tokens: bool = False
     """If True, includes PROMPT_START/PROMPT_END special tokens (IDs 3, 4)."""
 
+    spec_tokens: bool = False
+    """If True, includes SPEC_START/SPEC_END special tokens (IDs 5, 6) for a
+    specification block (test asserts / I-O examples) -- the goal-observation
+    conditioning of kelp_v2.md M2 (issue #147). Requires prompt_tokens=True."""
+
+    def __post_init__(self) -> None:
+        if self.spec_tokens and not self.prompt_tokens:
+            raise ValueError("spec_tokens=True requires prompt_tokens=True")
+
     @property
     def num_special_tokens(self) -> int:
-        """Number of fixed special tokens (PAD, SOS, EOS, and optionally PROMPT_START, PROMPT_END)."""
+        """Number of fixed special tokens (PAD, SOS, EOS, and optionally
+        PROMPT_START/PROMPT_END and SPEC_START/SPEC_END)."""
+        if self.spec_tokens:
+            return 7
         return 5 if self.prompt_tokens else 3
 
     @property
@@ -103,6 +122,18 @@ class EditTokenizer:
         if not self.prompt_tokens:
             raise ValueError("prompt_end_token_id is only available when prompt_tokens=True")
         return 4
+
+    @property
+    def spec_start_token_id(self) -> int:
+        if not self.spec_tokens:
+            raise ValueError("spec_start_token_id is only available when spec_tokens=True")
+        return 5
+
+    @property
+    def spec_end_token_id(self) -> int:
+        if not self.spec_tokens:
+            raise ValueError("spec_end_token_id is only available when spec_tokens=True")
+        return 6
 
     @property
     def num_position_tokens(self) -> int:
@@ -161,6 +192,10 @@ class EditTokenizer:
             return "<PROMPT_START>"
         if self.prompt_tokens and token_id == self.prompt_end_token_id:
             return "<PROMPT_END>"
+        if self.spec_tokens and token_id == self.spec_start_token_id:
+            return "<SPEC_START>"
+        if self.spec_tokens and token_id == self.spec_end_token_id:
+            return "<SPEC_END>"
         if self.is_position_token(token_id):
             pos = self.position_from_token(token_id)
             return f"<POS {pos}>"
@@ -189,6 +224,8 @@ class EditTokenizer:
                 continue
             if self.prompt_tokens and tid in (self.prompt_start_token_id, self.prompt_end_token_id):
                 continue
+            if self.spec_tokens and tid in (self.spec_start_token_id, self.spec_end_token_id):
+                continue
             if self.is_position_token(tid):
                 continue
             base_idx = tid - self.base_token_offset
@@ -202,6 +239,7 @@ class EditTokenizer:
         edit_position_token_idx: int,
         replacement_source: str,
         prompt_source: str | None = None,
+        spec_source: str | None = None,
     ) -> tuple[list[int], list[int]]:
         """Encode a complete training example.
 
@@ -212,21 +250,17 @@ class EditTokenizer:
             replacement_source: The replacement source code string.
             prompt_source: Optional natural language prompt (e.g. docstring)
                 to prepend. Requires prompt_tokens=True on the tokenizer.
+            spec_source: Optional specification block (test asserts / I-O
+                examples). Requires spec_tokens=True on the tokenizer.
 
         Returns:
             Tuple of (token_ids, loss_mask) where:
             - token_ids: Full sequence, optionally prefixed with
-              [PROMPT_START, prompt_bytes, PROMPT_END]
-            - loss_mask: 0 for prompt+context+SOS, 1 for POS+replacement+EOS
+              [PROMPT_START, prompt_bytes, PROMPT_END] and
+              [SPEC_START, spec_bytes, SPEC_END]
+            - loss_mask: 0 for prompt+spec+context+SOS, 1 for POS+replacement+EOS
         """
-        # Encode optional prompt prefix.
-        prompt_prefix: list[int] = []
-        if prompt_source is not None:
-            if not self.prompt_tokens:
-                raise ValueError("prompt_source requires prompt_tokens=True on the tokenizer")
-            prompt_byte_tokens = self.encode_source(prompt_source)
-            prompt_prefix = [self.prompt_start_token_id] + prompt_byte_tokens + [self.prompt_end_token_id]
-
+        prompt_prefix = self.encode_prompt_prefix(prompt_source, spec=spec_source)
         context_tokens = self.encode_source(context_source)
         replacement_tokens = self.encode_source(replacement_source)
         pos_token = self.position_token_id(edit_position_token_idx)
@@ -246,15 +280,25 @@ class EditTokenizer:
 
         return token_ids, loss_mask
 
-    def encode_prompt_prefix(self, prompt: str) -> list[int]:
-        """Encode a prompt string as [PROMPT_START, prompt_bytes, PROMPT_END].
+    def encode_prompt_prefix(self, prompt: str | None, spec: str | None = None) -> list[int]:
+        """Encode the conditioning prefix: an optional prompt block followed by
+        an optional spec block.
 
-        For use during inference to prepend a prompt to context tokens.
-        Requires prompt_tokens=True.
+        Shared by training encoding and inference so the two can never drift:
+        ``[PROMPT_START, prompt_bytes, PROMPT_END][SPEC_START, spec_bytes,
+        SPEC_END]``, either block omitted when its source is None. A prompt
+        requires prompt_tokens=True; a spec requires spec_tokens=True.
         """
-        if not self.prompt_tokens:
-            raise ValueError("encode_prompt_prefix requires prompt_tokens=True")
-        return [self.prompt_start_token_id] + self.encode_source(prompt) + [self.prompt_end_token_id]
+        prefix: list[int] = []
+        if prompt is not None:
+            if not self.prompt_tokens:
+                raise ValueError("prompt requires prompt_tokens=True on the tokenizer")
+            prefix += [self.prompt_start_token_id] + self.encode_source(prompt) + [self.prompt_end_token_id]
+        if spec is not None:
+            if not self.spec_tokens:
+                raise ValueError("spec requires spec_tokens=True on the tokenizer")
+            prefix += [self.spec_start_token_id] + self.encode_source(spec) + [self.spec_end_token_id]
+        return prefix
 
     def char_offset_to_token_index(
         self,

@@ -106,6 +106,47 @@ def is_valid_python(source: str) -> bool:
         return False
 
 
+def extract_spec_asserts(source: str, max_asserts: int = 4) -> str | None:
+    """Derive a specification block (assert lines) from a function's doctests.
+
+    The training-side analog of the MBPP assert lists used at eval: each doctest
+    example whose expression is a single call and whose expected output is a
+    literal becomes ``assert <call> == <literal>``, normalizing both spec
+    sources to the same format (kelp_v2.md M2, issue #147). Examples with
+    non-literal output (reprs of objects, multi-line wants, statements) are
+    skipped rather than guessed at. Returns None when nothing qualifies.
+    """
+    import doctest
+
+    docstring = extract_docstring(source)
+    if not docstring:
+        return None
+
+    try:
+        examples = doctest.DocTestParser().get_examples(docstring)
+    except ValueError:
+        return None
+
+    asserts: list[str] = []
+    for ex in examples:
+        expr = ex.source.strip()
+        want = ex.want.strip()
+        if not want or "\n" in want or "\n" in expr:
+            continue
+        try:
+            mod = ast.parse(expr)
+            if len(mod.body) != 1 or not isinstance(mod.body[0], ast.Expr):
+                continue
+            ast.literal_eval(want)
+        except (SyntaxError, ValueError):
+            continue
+        asserts.append(f"assert {expr} == {want}")
+        if len(asserts) >= max_asserts:
+            break
+
+    return "\n".join(asserts) if asserts else None
+
+
 # Toy corpus of 15 small Python functions used for training and evaluation.
 # Each program is a standalone function covering basic arithmetic, comparisons,
 # and control flow patterns.
