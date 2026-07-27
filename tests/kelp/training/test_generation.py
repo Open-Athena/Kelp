@@ -129,15 +129,7 @@ def test_spec_conditioning_threads_through_generation(bank):
     clean program deterministically does/doesn't get a spec block, and the spec
     never carries loss (it is conditioning, not target)."""
     tok = EditTokenizer(max_seq_len=MAX_SEQ_LEN, prompt_tokens=True, spec_tokens=True)
-    doctested = (
-        "def add(a, b):\n"
-        '    """Add.\n'
-        "\n"
-        "    >>> add(1, 2)\n"
-        "    3\n"
-        '    """\n'
-        "    return a + b\n"
-    )
+    doctested = 'def add(a, b):\n    """Add.\n\n    >>> add(1, 2)\n    3\n    """\n    return a + b\n'
     corpus = [doctested] + CORPUS[1:]
 
     def gen(p_spec, seed):

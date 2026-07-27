@@ -45,9 +45,9 @@ import jax
 from etils import epath
 
 from kelp.cli._eval_resume import eval_fingerprint, load_completed, shard_dir, write_result
+from kelp.cli._logging import configure_logging
 from kelp.cli._stats import bootstrap_ci
 from kelp.cli._test_runner import default_runner
-from kelp.cli._logging import configure_logging
 from kelp.corpus import is_valid_python, load_corpus
 from kelp.inference.beam_search import best_of_n
 from kelp.model.checkpointing import find_best_checkpoint, load_checkpoint
@@ -509,7 +509,9 @@ def main():
     logger.info(f"{'Syntactic validity rate':<30} {avg_valid:>10.1%}")
     logger.info(f"{'Exact match rate':<30} {avg_exact:>10.1%}")
     logger.info(f"{'Avg test pass rate':<30} {avg_test_pass:>10.1%}  [{avg_pass_ci[0]:>6.1%}, {avg_pass_ci[1]:>6.1%}]")
-    logger.info(f"{'Best test pass rate':<30} {avg_best_pass:>10.1%}  [{best_pass_ci[0]:>6.1%}, {best_pass_ci[1]:>6.1%}]")
+    logger.info(
+        f"{'Best test pass rate':<30} {avg_best_pass:>10.1%}  [{best_pass_ci[0]:>6.1%}, {best_pass_ci[1]:>6.1%}]"
+    )
     logger.info(f"{'Tasks fully repaired':<30} {solved_rate:>10.1%}  [{solved_ci[0]:>6.1%}, {solved_ci[1]:>6.1%}]")
     logger.info("=" * 70)
 
