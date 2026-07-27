@@ -39,7 +39,7 @@ Long-term, the project aims to:
 
 Kelp scales [Kapur, Jenner & Russell (2024)](https://arxiv.org/abs/2405.20519)
 from 8-primitive inverse-graphics DSLs to real Python. Each of the paper's
-load-bearing components has a Python analog; the honest status of each is the
+primary components has a Python analog; the current status of each is the
 map of the project:
 
 | Paper | Kelp | Status |
