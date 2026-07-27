@@ -35,12 +35,24 @@ import os
 import select
 import subprocess
 import sys
+from typing import IO
 
 logger = logging.getLogger(__name__)
 
 
 def _worker_argv() -> list[str]:
     return [sys.executable, "-u", "-m", "kelp.cli._test_runner"]
+
+
+def _pipes(proc: subprocess.Popen) -> tuple[IO[bytes], IO[bytes]]:
+    """The worker's (stdin, stdout) handles, narrowed to non-None for mypy.
+
+    Always present because the worker is spawned with ``stdin=PIPE``/
+    ``stdout=PIPE``; the raise is unreachable in practice.
+    """
+    if proc.stdin is None or proc.stdout is None:  # pragma: no cover
+        raise RuntimeError("test-runner worker spawned without PIPE stdio")
+    return proc.stdin, proc.stdout
 
 
 def _worker_env() -> dict:
@@ -90,11 +102,12 @@ class SubprocessTestRunner:
         once per (re)spawn; a real eval never legitimately fails this job.
         """
         job = json.dumps({"setup": "", "program": "x = 1", "test": "assert x == 1"})
+        stdin, stdout = _pipes(proc)
         try:
-            proc.stdin.write((job + "\n").encode())
-            proc.stdin.flush()
-            readable, _, _ = select.select([proc.stdout], [], [], self._PROBE_TIMEOUT_S)
-            reply = proc.stdout.readline() if readable else b""
+            stdin.write((job + "\n").encode())
+            stdin.flush()
+            readable, _, _ = select.select([stdout], [], [], self._PROBE_TIMEOUT_S)
+            reply = stdout.readline() if readable else b""
         except OSError:
             reply = b""
         if reply != b"1\n":
@@ -121,30 +134,30 @@ class SubprocessTestRunner:
         seconds (``timeout_s <= 0`` disables the limit). Any timeout, crash, or
         protocol failure counts as a failed test, never an exception here.
         """
-        proc = self._ensure_worker()
+        stdin, stdout = _pipes(self._ensure_worker())
         job = json.dumps({"setup": setup_code, "program": program, "test": test_assert})
         try:
-            proc.stdin.write((job + "\n").encode())
-            proc.stdin.flush()
+            stdin.write((job + "\n").encode())
+            stdin.flush()
         except (BrokenPipeError, OSError):
             # Worker died between jobs; one respawn-and-retry, then give up.
             self._kill_worker()
-            proc = self._ensure_worker()
+            stdin, stdout = _pipes(self._ensure_worker())
             try:
-                proc.stdin.write((job + "\n").encode())
-                proc.stdin.flush()
+                stdin.write((job + "\n").encode())
+                stdin.flush()
             except (BrokenPipeError, OSError):
                 self._kill_worker()
                 return False
 
         timeout = timeout_s if timeout_s > 0 else None
-        readable, _, _ = select.select([proc.stdout], [], [], timeout)
+        readable, _, _ = select.select([stdout], [], [], timeout)
         if not readable:
             logger.debug("Test execution timed out after %.1fs; killing worker", timeout_s)
             self._kill_worker()
             return False
 
-        reply = proc.stdout.readline()
+        reply = stdout.readline()
         if reply not in (b"1\n", b"0\n"):
             # EOF (worker crashed mid-job, e.g. os._exit) or garbage.
             self._kill_worker()
@@ -155,7 +168,8 @@ class SubprocessTestRunner:
         if self._proc is None:
             return
         try:
-            self._proc.stdin.close()
+            if self._proc.stdin is not None:
+                self._proc.stdin.close()
             self._proc.wait(timeout=1.0)
         except (OSError, subprocess.TimeoutExpired):
             self._kill_worker()
