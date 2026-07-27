@@ -144,9 +144,14 @@ class EditTrainingConfig:
     Only effective when the model config has prompt_tokens=True."""
 
     p_spec: float = 0.5
-    """Probability of including a doctest-derived assert spec when one is
+    """Probability of including an executable assert spec when one is
     available (issue #147). Only effective when the model config has
     spec_tokens=True. Independent of p_prompt for the conditioning ablation."""
+
+    spec_file: str | None = None
+    """JSONL spec sidecar (local or gs://) from prepare_corpus --require-spec /
+    --spec-output. Loaded once into the generation config; sidecar specs take
+    precedence over inline doctest extraction."""
 
     p_near_miss: float = 0.0
     """Probability of corrupting with an e-graph near-miss (realistic in-context

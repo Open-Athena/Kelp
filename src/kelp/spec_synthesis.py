@@ -184,9 +184,31 @@ def synthesize_spec(
         if line not in result.asserts:
             result.asserts.append(line)
             result.n_fuzz += 1
+
+    # An all-None spec (side-effect-style function) constrains nothing about
+    # behavior -- worthless as a conditioning signal, so report no spec at all.
+    if result.asserts and all(a.endswith("== None") for a in result.asserts):
+        result.asserts = []
+        result.n_doctest = result.n_fuzz = 0
+        result.skip_reason = "all_none_outputs"
     return result
 
 
 def corpus_spec_key(source: str) -> str:
     """Stable sidecar key for a corpus program (content hash, order-independent)."""
     return hashlib.sha1(source.encode()).hexdigest()[:16]
+
+
+def load_spec_map(path: str) -> dict[str, str]:
+    """Load a JSONL spec sidecar (local or gs://) into a {key: spec} dict."""
+    import json
+
+    from etils import epath
+
+    spec_map: dict[str, str] = {}
+    for line in epath.Path(path).read_text().splitlines():
+        if line.strip():
+            record = json.loads(line)
+            spec_map[record["key"]] = record["spec"]
+    logger.info(f"Loaded {len(spec_map)} specs from {path}")
+    return spec_map

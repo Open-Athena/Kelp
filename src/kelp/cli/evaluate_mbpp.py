@@ -131,6 +131,9 @@ def evaluate_mbpp_task(
     max_depth: int = 10,
     constrain_position: bool = False,
     test_timeout: float = 5.0,
+    conditioning: str = "both",
+    spec_holdout: bool = False,
+    spec_oracle: bool = False,
 ) -> dict:
     """Evaluate a single MBPP task across multiple corruption/repair trials.
 
@@ -138,16 +141,28 @@ def evaluate_mbpp_task(
     :func:`kelp.tree.corruption.corrupt_realistic` policy: set it to the training
     run's value to measure the *trained* task (matched eval), or 0.0 for the
     original out-of-context bank-swap (unmatched / generalization eval).
+
+    ``conditioning`` selects which signals the model sees ({both, nl, spec,
+    none}) -- the eval half of the M2 ablation grid. ``spec_holdout`` shows the
+    model only K-1 of the task's K asserts while scoring on all K, separating
+    behavior inference from assert-copying. ``spec_oracle`` replaces the spec
+    with the CLEAN PROGRAM itself: the information ceiling -- if repair doesn't
+    move even here, the bottleneck is mechanical, not informational.
     """
     clean = task["clean"]
     tests = task["tests"]
     setup_code = task.get("setup_code", "")
-    prompt = task.get("text") if tokenizer.prompt_tokens else None
-    # Spec conditioning (issue #147): the task's asserts become the model's
-    # goal-observation block. NOTE these are the same asserts that score the
-    # metric, which makes best-of-N reranking partially circular -- spec-
-    # conditioned results must be reported with and without reranking.
-    spec = "\n".join(tests) if tokenizer.spec_tokens and tests else None
+    prompt = task.get("text") if tokenizer.prompt_tokens and conditioning in ("both", "nl") else None
+    # Spec conditioning (issue #147). NOTE the shown asserts also score the
+    # metric and drive best-of-N reranking (partial circularity) -- the
+    # spec_holdout arm is the honest headline for spec-conditioned runs.
+    spec: str | None = None
+    if tokenizer.spec_tokens and conditioning in ("both", "spec"):
+        if spec_oracle:
+            spec = clean
+        elif tests:
+            shown_tests = tests[:-1] if spec_holdout and len(tests) > 1 else tests
+            spec = "\n".join(shown_tests)
     rng = random.Random(task["task_id"])
 
     total_valid = 0
@@ -289,6 +304,26 @@ def parse_args() -> argparse.Namespace:
         help="Per-test wall-clock limit (seconds) for executing a generated candidate; a "
         "non-terminating candidate fails the test instead of hanging the eval (0 disables).",
     )
+    parser.add_argument(
+        "--conditioning",
+        type=str,
+        default="both",
+        choices=["both", "nl", "spec", "none"],
+        help="Which conditioning signals the model sees (the M2 eval ablation): nl = task text "
+        "only, spec = asserts only, both, or none. Signals a checkpoint lacks are dropped anyway.",
+    )
+    parser.add_argument(
+        "--spec-holdout",
+        action="store_true",
+        help="Show the model only K-1 of the task's K asserts, score on all K: separates behavior "
+        "inference from assert-copying. The honest headline for spec-conditioned evals.",
+    )
+    parser.add_argument(
+        "--spec-oracle",
+        action="store_true",
+        help="Replace the spec block with the CLEAN PROGRAM (information ceiling): if repair does "
+        "not move even with the answer in-context, the bottleneck is mechanical, not informational.",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--output", type=str, default=None, help="Output JSON file for results")
     parser.add_argument(
@@ -363,6 +398,9 @@ def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
             "corpus_file": args.corpus_file,
             "constrain_position": args.constrain_position,
             "test_timeout": args.test_timeout,
+            "conditioning": args.conditioning,
+            "spec_holdout": args.spec_holdout,
+            "spec_oracle": args.spec_oracle,
         }
     )
 
@@ -459,6 +497,9 @@ def main():
             max_depth=args.max_depth,
             constrain_position=args.constrain_position,
             test_timeout=args.test_timeout,
+            conditioning=args.conditioning,
+            spec_holdout=args.spec_holdout,
+            spec_oracle=args.spec_oracle,
         )
         write_result(tasks_dir, result, "task_id")
         completed[tid] = result
@@ -542,6 +583,9 @@ def main():
             "max_tasks": args.max_tasks,
             "corpus_file": args.corpus_file,
             "test_timeout": args.test_timeout,
+            "conditioning": args.conditioning,
+            "spec_holdout": args.spec_holdout,
+            "spec_oracle": args.spec_oracle,
         },
         "aggregate": {
             "tasks_evaluated": len(tasks_with_trials),

@@ -18,23 +18,44 @@ from kelp.tree.subtree_bank import EXTRACTABLE_TYPES, count_statements
 
 
 def linecol_to_offset(source: str, line: int, col: int) -> int:
-    """Convert a 1-based line and 0-based column to a character offset.
+    """Convert a 1-based line and 0-based BYTE column to a character offset.
+
+    ``ast`` reports ``col_offset``/``end_col_offset`` as UTF-8 **byte** offsets
+    within the line (CPython docs), while Python strings index by character.
+    Adding the byte column to a character index mislocates every span on a line
+    with non-ASCII text before the position -- and past end-of-source it made
+    downstream scanners crash with IndexError (surfaced by Stack Edu content
+    during the curated_v3 build). The byte column is decoded against the line's
+    UTF-8 encoding to get the true character column.
 
     Args:
         source: The source string.
         line: 1-based line number (as returned by ast nodes).
-        col: 0-based column offset.
+        col: 0-based byte column offset (as returned by ast nodes).
 
     Returns:
         0-based character offset into source.
     """
     current_line = 1
+    line_start = 0
     for i, ch in enumerate(source):
         if current_line == line:
-            return i + col
+            line_start = i
+            break
         if ch == "\n":
             current_line += 1
-    return len(source) + col
+    else:
+        line_start = len(source)
+
+    line_end = source.find("\n", line_start)
+    if line_end == -1:
+        line_end = len(source)
+    line_text = source[line_start:line_end]
+    if line_text.isascii():
+        char_col = col  # fast path: byte col == char col
+    else:
+        char_col = len(line_text.encode("utf-8")[:col].decode("utf-8", errors="ignore"))
+    return min(line_start + char_col, len(source))
 
 
 def node_source_span(source: str, node: ast.AST) -> tuple[int, int] | None:

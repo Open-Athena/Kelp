@@ -477,6 +477,21 @@ def parse_args() -> argparse.Namespace:
         "existing corpus. Off by default; the training-time --no-bank-swap-fallback drops these "
         "at load time regardless, so regenerating the corpus is optional.",
     )
+    parser.add_argument(
+        "--require-spec",
+        action="store_true",
+        help="Keep only functions for which an executable assert spec can be synthesized "
+        "(sandbox-validated doctests or deterministic value fuzzing; see kelp.spec_synthesis). "
+        "The spec-conditioning corpus filter (kelp_v2.md M2): standalone, executable functions "
+        "only -- class methods and I/O-bound functions are dropped. Write specs with --spec-output.",
+    )
+    parser.add_argument(
+        "--spec-output",
+        type=str,
+        default=None,
+        help="With --require-spec: write the synthesized specs as a JSONL sidecar (content-hash "
+        "keyed, the format kelp-train --spec-file consumes) to this path (local or gs://).",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed for shuffling")
     return parser.parse_args()
 
@@ -544,6 +559,24 @@ def main():
         filtered = [p for p in filtered if has_corruptible_content(p)]
         logger.info(f"After --require-corruptible: {len(filtered)} programs ({before - len(filtered)} dropped)")
 
+    # Optional: keep only functions with a synthesizable executable spec
+    # (kelp_v2.md M2). Executes every candidate in the sandboxed worker; on
+    # curated_v2/stack-edu this drops ~90% (methods, I/O-bound), so aim the
+    # raw pull ~10x above the target corpus size.
+    spec_lines: list[str] = []
+    if args.require_spec:
+        from kelp.spec_synthesis import corpus_spec_key, synthesize_spec
+
+        before = len(filtered)
+        kept: list[str] = []
+        for p in filtered:
+            result = synthesize_spec(p)
+            if result.spec is not None:
+                kept.append(p)
+                spec_lines.append(json.dumps({"key": corpus_spec_key(p), "spec": result.spec}))
+        filtered = kept
+        logger.info(f"After --require-spec: {len(filtered)} programs ({before - len(filtered)} dropped)")
+
     # Shuffle for training diversity.
     rng.shuffle(filtered)
 
@@ -551,6 +584,12 @@ def main():
     output_path = epath.Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_corpus(filtered, output_path)
+
+    if spec_lines and args.spec_output:
+        spec_path = epath.Path(args.spec_output)
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text("\n".join(spec_lines) + "\n")
+        logger.info(f"Wrote {len(spec_lines)} specs to {spec_path}")
 
     # Report stats.
     total_chars = sum(len(p) for p in filtered)

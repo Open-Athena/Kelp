@@ -144,6 +144,13 @@ def parse_args() -> argparse.Namespace:
         "Independent of --p-prompt so the {none, NL, spec, NL+spec} ablation grid is trainable.",
     )
     parser.add_argument(
+        "--spec-file",
+        type=str,
+        default=None,
+        help="JSONL spec sidecar (local or gs://) from prepare_corpus --spec-output. Sandbox-"
+        "validated specs keyed by program content hash; preferred over inline doctest extraction.",
+    )
+    parser.add_argument(
         "--p-near-miss",
         type=float,
         default=0.0,
@@ -288,6 +295,7 @@ def main():
         curriculum_warmup_fraction=args.curriculum_warmup_fraction,
         p_prompt=args.p_prompt,
         p_spec=args.p_spec,
+        spec_file=args.spec_file,
         p_near_miss=args.p_near_miss,
         p_random=args.p_random,
         allow_bank_swap=args.allow_bank_swap,

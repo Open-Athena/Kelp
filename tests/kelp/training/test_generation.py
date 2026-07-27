@@ -151,3 +151,33 @@ def test_spec_conditioning_threads_through_generation(bank):
 
     ex_off = next(e for e in (gen(0.0, s) for s in range(20)) if e is not None)
     assert not ex_off.spec_used and tok.spec_start_token_id not in ex_off.token_ids
+
+
+def test_sidecar_spec_map_takes_precedence_over_doctests(bank):
+    """A spec_map entry for the clean program is used verbatim (sandbox-
+    validated at corpus build); doctest extraction is only the fallback."""
+    from kelp.spec_synthesis import corpus_spec_key
+
+    tok = EditTokenizer(max_seq_len=MAX_SEQ_LEN, prompt_tokens=True, spec_tokens=True)
+    sidecar_spec = "assert add(1, 1) == 2"
+    cfg = GenerationConfig(p_spec=1.0, p_random=0.0, spec_map={corpus_spec_key(CORPUS[0]): sidecar_spec})
+    ex = next(
+        e
+        for e in (
+            generate_example(
+                CORPUS[0],
+                CORPUS,
+                bank,
+                tok,
+                max_corruption_steps=3,
+                gen_cfg=cfg,
+                rng=random.Random(s),
+                max_seq_len=MAX_SEQ_LEN,
+            )
+            for s in range(20)
+        )
+        if e is not None
+    )
+    assert ex.spec_used
+    decoded = tok.decode_source(ex.token_ids)
+    assert decoded.startswith(sidecar_spec)  # sidecar text, not a doctest derivation
