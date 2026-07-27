@@ -488,6 +488,49 @@ redesign that follows from this.
   attention, MFU logging; preemption-resilient checkpointing; a
   non-hanging eval; and BATCH-band scheduling by default.
 
+### v11: The deconfound grid + multi-step training (`exp11`) — training recipe doesn't matter; conditioning is the live hypothesis
+
+The adversarial review (see [docs/kelp_v2.md](docs/kelp_v2.md)) argued exp10's
+conclusions were confounded (training AND eval difficulty changed together) and
+underpowered (n≈50). v11 settled both questions properly: every checkpoint ×
+every corruption depth, on the same 500 tasks, same seed, with a hardened
+(kill-on-timeout, sandboxed-subprocess) eval and bootstrap CIs. It also trained
+**exp11**: the paper-faithful multi-step recipe (s ~ U[1,3], reverse-path
+targets, explicit `--p-random 0.2`), all else held at exp10-control values.
+
+**Evaluation (MBPP held out; step-50000; best-of-16; matched arm; n=496–493):**
+
+| Tasks fully repaired [95% CI] | steps=1 | steps=2 | steps=3 |
+|---|---|---|---|
+| v9 `vet-cond-v2` (multi-step ≤2) | 22.0% [18.5, 26.0] | 7.5% [5.3, 9.9] | 12.1% [9.3, 15.1] |
+| exp10 115M (single-edit) | 22.0% [18.5, 26.0] | 7.5% [5.3, 9.9] | 12.1% [9.5, 15.1] |
+| exp10 305M (single-edit) | 22.4% [19.0, 26.4] | 7.1% [4.9, 9.5] | 11.9% [9.1, 14.7] |
+| exp11 115M (multi-step ≤3) | 22.0% [18.5, 25.8] | 7.9% [5.7, 10.3] | 12.1% [9.3, 15.1] |
+
+**What we learned:**
+- **The training recipe is irrelevant at this scale/data — a clean negative
+  result.** Single-edit, ≤2-step, and ≤3-step training are statistically
+  indistinguishable at *every* eval depth, and it's not just equal counts:
+  the models solve essentially the **same task sets** (107/109 overlap at
+  steps=1). Repairability is a property of the (task, corruption) pair, not
+  the model variant. The kelp_v2.md M1 kill criterion fired as designed.
+- **Capacity is genuinely flat, now with power**: 305M vs 115M differs by
+  <1pp at every depth at n≈500 — exp10's directional claim, finally supported.
+- **exp10's "single-edit lifted the floor" is retracted**: under matched
+  conditions the lift vanishes entirely; the old 15→18% was the easier eval.
+  Relatedly, the old 50-task numbers were *biased* low, not just noisy
+  (~18.8% vs ~33% best-of-16 at n=500): the first-50 MBPP slice is not a
+  random sample.
+- **Difficulty is non-monotonic in corruption steps** (steps=2 is harder than
+  steps=3) — corruption cancellation in the cascade is worth understanding
+  before interpreting any steps-sweep.
+- **Every training run saturates** (loss ~0.03, acc ~99%) while repair sits at
+  22%. The models have learned the training task; the training task doesn't
+  contain the information repair needs. All process-side levers (capacity,
+  corruption recipe, corpus realism) are now measured flat — **conditioning
+  (spec + execution feedback, kelp_v2.md M2/M3) is the only untested lever**,
+  exactly as the design doc predicted.
+
 ## Project Structure
 
 The package is layered so the pipeline reads top to bottom — representation →
