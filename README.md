@@ -44,9 +44,9 @@ map of the project:
 
 | Paper | Kelp | Status |
 |---|---|---|
-| Small subtree mutations, s ~ U[1,5] | Realistic in-context corruption, multi-step | ✅ (multi-step restored in exp11) |
+| Small subtree mutations, s ~ U[1,5] | Realistic in-context corruption, multi-step | ✅ |
 | Reverse-path single-step targets | `tree_diff` path, random-step supervision | ✅ |
-| ρ-mixture of random inits (long-range) | `--p-random` random-program pairs | ✅ (now explicit) |
+| ρ-mixture of random inits (long-range) | `--p-random` random-program pairs | ✅ |
 | Goal observation x₀ (target image) | Spec: test asserts / I-O + NL intent | 🟡 spec blocks landed, unproven (M2) |
 | Execution feedback x_t (current render) | Run tests per edit; feed back failures | ❌ the known frontier (M3) |
 | Grammar-masked decoding | Byte+position decode, AST position masks | 🟡 validity 100%; position constraint optional |
@@ -64,31 +64,46 @@ design, milestones (M0–M6), and kill criteria: [docs/kelp_v2.md](docs/kelp_v2.
 ### The Pipeline
 
 ```
-  Clean Program     Corrupted Program       Edit Sequence         Repaired Program
-  ┌───────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
-  │ def add(   │     │ def add(      │     │ POS_7         │     │ def add(      │
-  │   a, b):   │ ──► │   a, b):     │ ──► │ return a + b  │ ──► │   a, b):     │
-  │   return   │     │   return     │     │ EOS           │     │   return     │
-  │   a + b    │     │   len(a)     │     │               │     │   a + b      │
-  └───────────┘     └───────────────┘     └───────────────┘     └───────────────┘
-                    Forward Process        AR Model Predicts      Applied Edit
-                    (AST Corruption)       (Position + Tokens)
+  Clean Program      Corrupted Program     Edit Sequence         Repaired Program
+  ┌────────────┐     ┌────────────┐     ┌───────────────┐     ┌────────────┐
+  │ def add(   │     │ def add(   │     │ POS_7         │     │ def add(   │
+  │   a, b):   │ ──► │   a, b):   │ ──► │ return a + b  │ ──► │   a, b):   │
+  │   return   │     │   return   │     │ EOS           │     │   return   │
+  │   a + b    │     │   a - b    │     │               │     │   a + b    │
+  └────────────┘     └────────────┘     └───────────────┘     └────────────┘
+                     Forward Process     AR Model Predicts     Applied Edit
+                     (realistic bug:     (Position + Tokens)
+                      operator flip)
 ```
 
 ### Forward Process (Corruption)
 
-The forward process corrupts a clean Python program through a sequence of AST-level mutations:
+Since v9, the default forward process plants **realistic in-context bugs**
+(`kelp.tree.corruption.corrupt_realistic`, shared verbatim between training and
+eval), trying in order:
 
-- Parse the program into an AST
-- Select a random non-root subtree node
-- Replace it with a type-compatible subtree from the **SubtreeBank** (a pre-indexed palette of real code fragments)
-- The result is always a syntactically valid Python program
+1. **Near-miss mutations**: e-graph-derived operator flips (`x > y` → `x < y`,
+   `a + b` → `a - b`) and comparison/boolean inversions — the kinds of bugs a
+   programmer actually writes
+2. **In-context swaps**: replace an expression with another expression drawn
+   from the *same program's* scope (right names, wrong logic)
+3. **Realistic-or-drop**: a program admitting no realistic corruption is
+   *dropped*, not grafted with an out-of-context fragment
 
-Multiple corruption steps create a "diffusion trajectory" — a sequence of progressively more corrupted programs, each one valid Python.
+Every corrupted state is still syntactically valid Python, and multiple steps
+create the "diffusion trajectory" of progressively more corrupted programs.
+The older bank-swap corruption (splice a type-compatible SubtreeBank fragment)
+survives only as an explicit fallback and as the "unmatched" generalization arm
+in evals — moving off it as the default was the v9 change that took repair from
+~2% to ~15%.
 
 ### SubtreeBank
 
-The SubtreeBank is a dictionary mapping AST node types (BinOp, Return, If, etc.) to lists of real code fragments extracted from the training corpus. It is augmented from multiple sources:
+The SubtreeBank is a dictionary mapping AST node types (BinOp, Return, If,
+etc.) to lists of real code fragments extracted from the training corpus.
+Today it powers the bank-swap corruption fallback, the "unmatched" eval arm,
+and augmentation diversity (it is no longer the primary corruption source —
+see Forward Process above). It is augmented from multiple sources:
 
 - **Original**: subtrees extracted directly from training programs
 - **Renamed**: variable names systematically swapped for diversity
@@ -98,12 +113,26 @@ The SubtreeBank is a dictionary mapping AST node types (BinOp, Return, If, etc.)
 
 ### Training
 
-Each training step:
+Each training example:
 1. Pick a random clean program from the corpus
-2. Corrupt it N steps using the SubtreeBank (forward process)
+2. Corrupt it with 1..S realistic bugs (forward process above) — or, with
+   probability `p_random` (default 0.2, the paper's ρ-mixture), use a *different
+   corpus program* as the "corrupted" state, teaching long-range repair paths
 3. Compute the `TreeDiff` — the minimal edit path back to the clean program
-4. Pick a random step along that path as the training target
-5. The model learns to predict: `[position_token, replacement_tokens..., EOS]`
+4. Pick a random step along that path: apply the prefix to build the input
+   state, supervise the single next edit
+5. Optionally prepend **conditioning**: the docstring as a natural-language
+   prompt (probability `p_prompt`) and, for spec-trained models, executable
+   test asserts as a spec block (probability `p_spec`, independent — so the
+   {none, NL, spec, NL+spec} ablation falls out of the two dropouts)
+
+The encoded sequence (loss only on the edit target):
+
+```
+  ┌── conditioning prefix (optional) ──────────┐┌─ input state ─┐┌──── edit target ────┐
+  [PROMPT] docstring [/PROMPT] [SPEC] asserts [/SPEC] program-bytes <SOS> <POS k> repl <EOS>
+   ····························· loss masked ····························  ██ supervised ██
+```
 
 The model is a standard causal transformer (using [Grug](https://github.com/marin-community/marin/tree/main/lib/levanter/src/levanter/grug) building blocks from Levanter) that operates on flat token sequences, not tree structures directly.
 
@@ -111,10 +140,11 @@ The model is a standard causal transformer (using [Grug](https://github.com/mari
 
 At inference time, the model iteratively repairs a corrupted program:
 
-1. Tokenize the corrupted program
+1. Tokenize the conditioning prefix (task text as the prompt; test asserts as
+   the spec, for spec-trained checkpoints) plus the corrupted program
 2. The model autoregressively predicts an edit: position token → replacement tokens → EOS
 3. Apply the edit to produce a new (hopefully less corrupted) program
-4. Repeat for up to `max_depth` steps
+4. Repeat for up to `max_depth` steps, re-tokenizing its own output each time
 
 Two inference strategies:
 - **Best-of-N**: generate N independent repair trajectories, return the best
