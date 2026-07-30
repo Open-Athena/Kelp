@@ -36,6 +36,7 @@ import argparse
 import logging
 import os
 import random
+import time
 from dataclasses import replace
 
 from kelp.cli._logging import configure_logging
@@ -142,6 +143,15 @@ def parse_args() -> argparse.Namespace:
         default=0.5,
         help="Probability of including an assert spec when one is available (default: 0.5). "
         "Independent of --p-prompt so the {none, NL, spec, NL+spec} ablation grid is trainable.",
+    )
+    parser.add_argument(
+        "--bank-file",
+        type=str,
+        default=None,
+        help="Precomputed subtree bank .json.gz from kelp.cli.build_bank (local or gs://). Skips "
+        "the minutes-long bank build + e-graph augmentation at startup -- essential on preemptible "
+        "slices, where un-checkpointed startup work re-runs from zero on every restart. "
+        "When set, --augment is ignored (bake augmentation into the artifact instead).",
     )
     parser.add_argument(
         "--spec-file",
@@ -262,11 +272,18 @@ def main():
         corpus = TOY_CORPUS
         logger.info(f"Using toy corpus ({len(corpus)} programs)")
 
-    # Build subtree bank and tokenizer.
-    bank = SubtreeBank.from_corpus(corpus)
-    if args.augment:
-        rng = random.Random(args.seed)
-        bank = augment_bank(bank, rng, n_renamed=2, n_perturbed=2, synthetic_count=50)
+    # Build subtree bank and tokenizer. A precomputed --bank-file skips the
+    # minutes-long augmentation startup that a preemptible slice cannot afford
+    # to redo per restart (see kelp.cli.build_bank).
+    if args.bank_file:
+        start = time.time()
+        bank = SubtreeBank.load(args.bank_file)
+        logger.info(f"Loaded precomputed bank from {args.bank_file} in {time.time() - start:.1f}s (--augment ignored)")
+    else:
+        bank = SubtreeBank.from_corpus(corpus)
+        if args.augment:
+            rng = random.Random(args.seed)
+            bank = augment_bank(bank, rng, n_renamed=2, n_perturbed=2, synthetic_count=50)
     tokenizer = EditTokenizer(
         max_seq_len=model_config.max_seq_len,
         prompt_tokens=model_config.prompt_tokens,

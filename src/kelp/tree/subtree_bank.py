@@ -164,6 +164,40 @@ class SubtreeBank:
         """
         return {(node_type, entry.source) for node_type, entries in self.entries.items() for entry in entries}
 
+    def save(self, path: str) -> None:
+        """Write the bank to a gzipped-JSON file (local or ``gs://``).
+
+        The precomputed-bank artifact: e-graph augmentation is minutes of
+        CPU-bound startup that a preemptible accelerator job cannot afford to
+        redo per restart (exp12 lost 29 attempts to it). Build once offline
+        with ``kelp.cli.build_bank``, load in seconds with :meth:`load`.
+        """
+        import gzip
+        import json
+
+        from etils import epath
+
+        payload = {
+            node_type: [[e.source, e.stmt_count] for e in entries] for node_type, entries in self.entries.items()
+        }
+        epath.Path(path).write_bytes(gzip.compress(json.dumps(payload).encode()))
+
+    @classmethod
+    def load(cls, path: str) -> "SubtreeBank":
+        """Load a bank written by :meth:`save` (local or ``gs://``)."""
+        import gzip
+        import json
+
+        from etils import epath
+
+        payload = json.loads(gzip.decompress(epath.Path(path).read_bytes()))
+        return cls(
+            entries={
+                node_type: [SubtreeEntry(source=s, node_type=node_type, stmt_count=n) for s, n in entries]
+                for node_type, entries in payload.items()
+            }
+        )
+
     def sample(self, node_type: str, rng: random.Random) -> SubtreeEntry | None:
         """Sample a random subtree of the given AST node type.
 
