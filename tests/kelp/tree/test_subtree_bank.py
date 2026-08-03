@@ -269,6 +269,11 @@ def test_bank_save_load_round_trip(tmp_path):
     bank = SubtreeBank.from_corpus(["def f(a, b):\n    return a + b\n", "def g(x):\n    if x > 0:\n        return x\n    return 0\n"])
     path = str(tmp_path / "bank.json.gz")
     bank.save(path)
+    # The artifact must actually BE gzip: a legacy plain-JSON save/load pair
+    # shadowed the gs://-capable implementation once and slipped through a
+    # round-trip-only test, killing an exp12 submission on the worker.
+    with open(path, "rb") as f:
+        assert f.read(2) == b"\x1f\x8b", "bank artifact is not gzip -- wrong save implementation"
     loaded = SubtreeBank.load(path)
     assert loaded.entries.keys() == bank.entries.keys()
     assert loaded.source_keys() == bank.source_keys()

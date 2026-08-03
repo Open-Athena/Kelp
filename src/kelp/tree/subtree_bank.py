@@ -328,40 +328,6 @@ class SubtreeBank:
             max_entries_per_type=max_entries_per_type,
         )
 
-    def save(self, path: str | Path) -> None:
-        """Save the bank to a JSON file."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        data = {}
-        for node_type, entries in self.entries.items():
-            data[node_type] = [{"source": e.source, "stmt_count": e.stmt_count} for e in entries]
-
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-
-        logger.info(f"Saved subtree bank ({self.total_entries} entries) to {path}")
-
-    @classmethod
-    def load(cls, path: str | Path) -> "SubtreeBank":
-        """Load a bank from a JSON file."""
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-
-        bank = cls()
-        for node_type, entries in data.items():
-            for entry_data in entries:
-                bank.add(
-                    SubtreeEntry(
-                        source=entry_data["source"],
-                        node_type=node_type,
-                        stmt_count=entry_data["stmt_count"],
-                    )
-                )
-
-        logger.info(f"Loaded subtree bank ({bank.total_entries} entries) from {path}")
-        return bank
-
     def summary(self) -> str:
         """Return a human-readable summary of bank contents."""
         lines = [f"SubtreeBank: {self.total_entries} entries, {len(self.entries)} types"]
