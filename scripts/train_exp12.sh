@@ -23,6 +23,9 @@ set -euo pipefail
 PRESET="${PRESET:-tpu_vet}"
 CORPUS_FILE="${CORPUS_FILE:-gs://marin-us-east5/kelp/corpus/curated_v3.txt}"
 SPEC_FILE="${SPEC_FILE:-gs://marin-us-east5/kelp/corpus/curated_v3_specs.jsonl}"
+# Precomputed augmented bank (kelp.cli.build_bank): skips the minutes-long
+# e-graph startup that cost the first two exp12 submissions 29 attempts.
+BANK_FILE="${BANK_FILE:-gs://marin-us-east5/kelp/corpus/curated_v3_bank.json.gz}"
 OUTPUT_DIR="${OUTPUT_DIR:-gs://marin-us-east5/kelp/checkpoints/exp12-spec}"
 STEPS="${STEPS:-50000}"
 MAX_CORRUPTION_STEPS="${MAX_CORRUPTION_STEPS:-3}"
@@ -30,7 +33,7 @@ P_NEAR_MISS="${P_NEAR_MISS:-1.0}"
 P_PROMPT="${P_PROMPT:-0.5}"
 P_SPEC="${P_SPEC:-0.5}"
 P_RANDOM="${P_RANDOM:-0.2}"
-CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-2000}"
+CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-500}"
 SEED="${SEED:-42}"
 WANDB_PROJECT="${WANDB_PROJECT:-kelp}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-exp12-spec}"
@@ -58,6 +61,7 @@ uv run kelp-launch "${LAUNCH_FLAGS[@]}" \
     -- \
     --corpus-file "$CORPUS_FILE" \
     --spec-file "$SPEC_FILE" \
+    --bank-file "$BANK_FILE" \
     --steps "$STEPS" \
     --augment \
     --prompt-conditioning \
