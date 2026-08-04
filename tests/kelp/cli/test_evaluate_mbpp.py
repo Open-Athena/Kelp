@@ -110,3 +110,38 @@ def test_broken_worker_environment_fails_loudly(monkeypatch):
     runner = _test_runner.SubprocessTestRunner()
     with pytest.raises(RuntimeError, match="startup probe"):
         runner.run("x = 1", "assert x == 1", timeout_s=5.0)
+
+
+def test_behavior_preserving_corruptions_are_skipped(monkeypatch):
+    """Issue #154: a corruption that still passes every assert is not a repair
+    task -- the unedited candidate would 'solve' it. Such trials must be
+    skipped (like textual no-ops), while test-breaking corruptions count."""
+    from types import SimpleNamespace
+
+    import jax
+
+    from kelp.cli import evaluate_mbpp as em
+    from kelp.tree.tokenizer import EditTokenizer
+
+    clean = "def add(a, b):\n    return a + b"
+    task = {"task_id": 1, "text": "add", "clean": clean, "tests": ["assert add(1, 2) == 3"], "setup_code": ""}
+    preserving = clean + "\n_unused = 0"  # differs textually, same behavior
+    breaking = clean.replace("a + b", "a - b")  # fails the assert
+
+    corruptions = iter([preserving, breaking])
+    monkeypatch.setattr(em, "corrupt_realistic", lambda *a, **k: (next(corruptions), "near_miss"))
+    monkeypatch.setattr(em, "best_of_n", lambda **k: [SimpleNamespace(source=clean)])
+
+    result = em.evaluate_mbpp_task(
+        task=task,
+        params=None,
+        config=None,
+        tokenizer=EditTokenizer(max_seq_len=128),
+        bank=None,
+        key=jax.random.PRNGKey(0),
+        num_corruptions=2,
+    )
+    # Trial 1 (behavior-preserving) skipped; trial 2 (breaking) counted and,
+    # with the clean program as candidate, genuinely solved.
+    assert result["num_trials"] == 1
+    assert result["solved"] is True

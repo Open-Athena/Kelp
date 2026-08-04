@@ -188,6 +188,13 @@ def evaluate_mbpp_task(
         if corrupted == clean:
             continue
 
+        # Behavior-preserving corruptions are not repair tasks: a corruption
+        # that still passes every assert lets the UNEDITED candidate "solve"
+        # the trial (96% of sampled exp11 'solved' outcomes -- issue #154).
+        # Skip them like textual no-ops; the fingerprint carries this change.
+        if sum(1 for t in tests if run_mbpp_test(corrupted, t, setup_code, timeout_s=test_timeout)) == len(tests):
+            continue
+
         total_trials += 1
 
         candidates = best_of_n(
@@ -401,6 +408,10 @@ def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
             "conditioning": args.conditioning,
             "spec_holdout": args.spec_holdout,
             "spec_oracle": args.spec_oracle,
+            # Constant fingerprint version marker: trials whose corruption
+            # still passes every assert are skipped as of issue #154. Ensures
+            # pre-fix shards (inflated by no-repair "solves") are never reused.
+            "skip_unbroken": True,
         }
     )
 
