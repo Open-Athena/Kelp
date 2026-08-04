@@ -202,14 +202,36 @@ def load_training_checkpoint(
     return params, extras["opt_state"], int(extras["step"]), extras["key"], config
 
 
+def _is_complete_checkpoint(ckpt_dir: epath.Path) -> bool:
+    """True iff the checkpoint finished committing.
+
+    A preemption can kill the job mid-write, leaving a partial ``step-XXXXXX``
+    dir on GCS. Without this check, resume deterministically crashes on the
+    incomplete latest dir and burns the job's failure-retry budget (exp12,
+    2026-08-04: incomplete step-005500 turned 6 survivable preemptions into a
+    terminal failure). Delegates to Orbax's own finalization check -- the same
+    one whose restore-side counterpart raises 'Found incomplete checkpoint' --
+    which understands both atomic-rename (local) and commit-marker (GCS)
+    filesystems.
+    """
+    import orbax.checkpoint as ocp
+
+    params_dir = ckpt_dir / PARAMS_SUBDIR
+    return params_dir.exists() and ocp.utils.is_checkpoint_finalized(params_dir)
+
+
 def find_best_checkpoint(checkpoint_dir: str | os.PathLike) -> epath.Path | None:
-    """Find the checkpoint with the highest step number.
+    """Find the COMPLETE checkpoint with the highest step number.
+
+    Incomplete checkpoints (no Orbax commit marker; see
+    :func:`_is_complete_checkpoint`) are skipped, so a mid-write preemption
+    falls back to the previous durable checkpoint instead of crashing resume.
 
     Args:
         checkpoint_dir: Parent directory containing ``step-XXXXXX`` subdirectories.
 
     Returns:
-        Path to the best checkpoint, or None if no checkpoints found.
+        Path to the best complete checkpoint, or None if no checkpoints found.
     """
     root = epath.Path(checkpoint_dir)
     if not root.exists():
@@ -218,6 +240,8 @@ def find_best_checkpoint(checkpoint_dir: str | os.PathLike) -> epath.Path | None
         [d for d in root.iterdir() if d.is_dir() and d.name.startswith("step-")],
         key=lambda d: int(d.name.split("-")[1]),
     )
-    if not ckpt_dirs:
-        return None
-    return ckpt_dirs[-1]
+    for d in reversed(ckpt_dirs):
+        if _is_complete_checkpoint(d):
+            return d
+        logger.warning(f"Skipping incomplete checkpoint {d} (no commit marker; interrupted mid-write)")
+    return None
