@@ -47,17 +47,19 @@ map of the project:
 | Small subtree mutations, s ~ U[1,5] | Realistic in-context corruption, multi-step | ✅ |
 | Reverse-path single-step targets | `tree_diff` path, random-step supervision | ✅ |
 | ρ-mixture of random inits (long-range) | `--p-random` random-program pairs | ✅ |
-| Goal observation x₀ (target image) | Spec: test asserts / I-O + NL intent | 🟡 spec blocks landed, unproven (M2) |
-| Execution feedback x_t (current render) | Run tests per edit; feed back failures | ❌ the known frontier (M3) |
+| Goal observation x₀ (target image) | Spec: test asserts / I-O + NL intent | ❌ tested (v12): no measurable effect |
+| Execution feedback x_t (current render) | Run tests per edit; feed back failures | ⏸ paused pending v12's mechanical question |
 | Grammar-masked decoding | Byte+position decode, AST position masks | 🟡 validity 100%; position constraint optional |
-| % solved vs. compute | Tasks fully repaired, CIs, n=500 | ✅ (as of the M0 eval overhaul) |
+| % solved vs. compute | Tasks fully repaired, CIs, n=500, broken-corruption gate | ✅ (hardened twice: v11, v12) |
 
-The missing middle rows are the working explanation for the project's core
-result so far: **100% syntactic validity with low semantic correctness**. A
-model that never observes the spec or its own execution output can localize
-and produce valid edits but must guess intended behavior. Closing that gap —
-not capacity, which measured flat at n=500 — is the current direction. Full
-design, milestones (M0–M6), and kill criteria: [docs/kelp_v2.md](docs/kelp_v2.md).
+The middle rows were the working explanation for the project's core result —
+**100% syntactic validity with low semantic correctness** — until v12 tested it:
+supplying the spec produced *no measurable lift*, and neither did placing the
+clean program itself in the prompt (the oracle arm). The current hypothesis is
+**mechanical**: a from-scratch 115M byte-level model shows no evidence of using
+in-context conditioning at all, which points at pretrained transfer and
+decoding constraints rather than richer signals. Full design, milestones
+(M0–M6), and kill criteria: [docs/kelp_v2.md](docs/kelp_v2.md).
 
 ## Architecture
 
@@ -560,6 +562,65 @@ targets, explicit `--p-random 0.2`), all else held at exp10-control values.
   corruption recipe, corpus realism) are now measured flat — **conditioning
   (spec + execution feedback, kelp_v2.md M2/M3) is the only untested lever**,
   exactly as the design doc predicted.
+
+### v12: Spec conditioning + the honest metric (`exp12`) — no conditioning effect; the bottleneck is mechanical
+
+v11 left conditioning as the only untested lever. v12 tested it properly, and
+along the way fixed the metric that had been flattering every previous result.
+
+**The metric fix first.** Extracting demo animations exposed that the eval
+counted *behavior-preserving corruptions* as repairs: a corruption that never
+broke the tests lets the **unedited** candidate "solve" the trial. Cross-checking
+stored candidates showed **96% of sampled v11 "solved" outcomes involved no
+repair at all**. The eval now executes each corrupted program against the
+task's asserts and skips trials that still pass everything (fingerprinted, so
+stale shards can't be reused).
+
+**Training.** One 115M model on `curated_v3` — 5,687 standalone Stack Edu
+functions, 100% docstring'd + corruptible + **spec'd** (sandbox-validated
+assert sidecars synthesized by executing each function) — with independent
+prompt/spec dropout (`p_prompt=0.5`, `p_spec=0.5`), multi-step corruption, 50K
+steps. The run also battle-hardened training against preemption (precomputed
+bounded-e-graph bank artifact: 35 min of startup → 57 s; 500-step checkpoints;
+resume that skips mid-write-corrupted checkpoints) after earlier submissions
+lost 29 attempts to scheduling churn.
+
+**Evaluation — the conditioning ablation over ONE checkpoint (n=494, tasks
+fully repaired, bootstrap 95% CIs, broken-corruption gate on):**
+
+| Arm | Solved [95% CI] | Best-of-16 (partial) |
+|---|---|---|
+| none (no conditioning) | 0.4% [0.0, 1.0] | 18.5% |
+| NL prompt only | 0.6% [0.0, 1.4] | 18.0% |
+| spec, held-out assert | 1.0% [0.2, 2.0] | 18.8% |
+| NL+spec, held-out assert | 1.0% [0.2, 2.0] | 19.0% |
+| NL+spec, all asserts shown | 0.8% [0.2, 1.6] | 18.6% |
+| **oracle: clean program as spec** | **0.6% [0.0, 1.4]** | 18.2% |
+| v11 model, requantified | 1.2% [0.4, 2.2] | 18.4% |
+
+**What we learned:**
+- **The honest repair rate is ~1%.** v11's "22% solved" was ~18× metric
+  inflation, now measured directly. Corollary: earlier cross-model comparisons
+  (capacity, corruption recipe) were made on the inflated metric and are
+  unresolved at the true floor.
+- **Spec conditioning produced no measurable effect.** All arms statistically
+  indistinguishable; the held-out-assert protocol rules out assert-copying as
+  a confound in either direction.
+- **The oracle arm is the decisive datum: flat.** The model cannot repair the
+  program even with the clean program *in its prompt*. (Caveat: a whole
+  program is out-of-distribution for a spec block trained on asserts — but
+  combined with spec ≈ NL ≈ none in-distribution, there is no evidence the
+  model exploits in-context conditioning at all.)
+- Per the pre-registered decision rules, this fires the **mechanical-bottleneck**
+  branch: stop investing in richer conditioning signals. The live hypotheses
+  are architectural — **pretrained transfer** (does a model that already reads
+  context change the answer?), position-constrained decoding, and the
+  byte-level tokenizer itself. Execution-feedback work is paused until any
+  in-context signal demonstrably moves behavior.
+
+A negative result, delivered by an instrument that finally can't flatter: the
+fully-repaired numbers above are the first in this README that mean exactly
+what they say.
 
 ## Project Structure
 
