@@ -266,7 +266,9 @@ def test_bank_save_load_round_trip(tmp_path):
     """The precomputed-bank artifact preserves every entry exactly -- a loaded
     bank must be indistinguishable from the built one (same corruption
     behavior), or precomputing silently changes the training distribution."""
-    bank = SubtreeBank.from_corpus(["def f(a, b):\n    return a + b\n", "def g(x):\n    if x > 0:\n        return x\n    return 0\n"])
+    bank = SubtreeBank.from_corpus(
+        ["def f(a, b):\n    return a + b\n", "def g(x):\n    if x > 0:\n        return x\n    return 0\n"]
+    )
     path = str(tmp_path / "bank.json.gz")
     bank.save(path)
     # The artifact must actually BE gzip: a legacy plain-JSON save/load pair

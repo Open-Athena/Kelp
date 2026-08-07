@@ -173,7 +173,6 @@ class SubtreeBank:
         with ``kelp.cli.build_bank``, load in seconds with :meth:`load`.
         """
         import gzip
-        import json
 
         from etils import epath
 
@@ -186,7 +185,6 @@ class SubtreeBank:
     def load(cls, path: str) -> "SubtreeBank":
         """Load a bank written by :meth:`save` (local or ``gs://``)."""
         import gzip
-        import json
 
         from etils import epath
 

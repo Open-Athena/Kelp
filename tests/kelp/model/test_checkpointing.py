@@ -81,6 +81,7 @@ def test_find_best_checkpoint_skips_incomplete(tmp_path):
     assert find_best_checkpoint(tmp_path).name == "step-001000"
 
     import shutil
+
     shutil.rmtree(tmp_path / "step-000500")
     shutil.rmtree(tmp_path / "step-001000")
     assert find_best_checkpoint(tmp_path) is None
