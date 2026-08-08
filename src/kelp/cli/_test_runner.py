@@ -134,8 +134,36 @@ class SubprocessTestRunner:
         seconds (``timeout_s <= 0`` disables the limit). Any timeout, crash, or
         protocol failure counts as a failed test, never an exception here.
         """
+        reply = self._roundtrip({"setup": setup_code, "program": program, "test": test_assert}, timeout_s)
+        if reply not in (b"1\n", b"0\n"):
+            # None/EOF (timeout or worker crash mid-job, e.g. os._exit) or garbage.
+            self._kill_worker()
+            return False
+        return reply == b"1\n"
+
+    def eval_expr(self, program: str, expr: str, setup_code: str = "", timeout_s: float = 5.0) -> str | None:
+        """Evaluate ``expr`` against ``program`` in the worker; return its repr.
+
+        For spec synthesis (kelp_v2.md M2): the worker evaluates the expression
+        twice and only reports a repr when both evaluations agree, so
+        nondeterministic or self-mutating calls yield None. Any raise, timeout,
+        or crash also yields None -- callers just skip that candidate input.
+        """
+        reply = self._roundtrip({"setup": setup_code, "program": program, "expr": expr}, timeout_s)
+        if reply is None or not reply.startswith(b"{"):
+            self._kill_worker()
+            return None
+        try:
+            payload = json.loads(reply)
+        except json.JSONDecodeError:
+            self._kill_worker()
+            return None
+        return payload["repr"] if payload.get("ok") else None
+
+    def _roundtrip(self, job_dict: dict, timeout_s: float) -> bytes | None:
+        """Send one job, return the reply line (None on timeout/dead worker)."""
         stdin, stdout = _pipes(self._ensure_worker())
-        job = json.dumps({"setup": setup_code, "program": program, "test": test_assert})
+        job = json.dumps(job_dict)
         try:
             stdin.write((job + "\n").encode())
             stdin.flush()
@@ -148,21 +176,15 @@ class SubprocessTestRunner:
                 stdin.flush()
             except (BrokenPipeError, OSError):
                 self._kill_worker()
-                return False
+                return None
 
         timeout = timeout_s if timeout_s > 0 else None
         readable, _, _ = select.select([stdout], [], [], timeout)
         if not readable:
-            logger.debug("Test execution timed out after %.1fs; killing worker", timeout_s)
+            logger.debug("Worker job timed out after %.1fs; killing worker", timeout_s)
             self._kill_worker()
-            return False
-
-        reply = stdout.readline()
-        if reply not in (b"1\n", b"0\n"):
-            # EOF (worker crashed mid-job, e.g. os._exit) or garbage.
-            self._kill_worker()
-            return False
-        return reply == b"1\n"
+            return None
+        return stdout.readline()
 
     def close(self) -> None:
         if self._proc is None:
@@ -200,17 +222,35 @@ def _worker_main() -> int:
     for line in proto_in:
         try:
             job = json.loads(line)
-            ok = False
             namespace: dict = {}
-            try:
-                if job["setup"]:
-                    exec(job["setup"], namespace)  # noqa: S102 - eval worker exists to execute generated code
-                exec(job["program"], namespace)  # noqa: S102
-                exec(job["test"], namespace)  # noqa: S102
-                ok = True
-            except BaseException:  # noqa: BLE001 - any raise (incl. SystemExit) is a failed test
+            if "expr" in job:
+                # Spec-synthesis job: exec the program, then evaluate the
+                # expression TWICE and require identical reprs -- an impure or
+                # nondeterministic call disqualifies itself here rather than
+                # producing a flaky assert downstream (kelp_v2.md M2).
+                reply: dict = {"ok": False}
+                try:
+                    if job["setup"]:
+                        exec(job["setup"], namespace)  # noqa: S102 - eval worker exists to execute generated code
+                    exec(job["program"], namespace)  # noqa: S102
+                    r1 = repr(eval(job["expr"], namespace))  # noqa: S307
+                    r2 = repr(eval(job["expr"], namespace))  # noqa: S307
+                    if r1 == r2:
+                        reply = {"ok": True, "repr": r1}
+                except BaseException:  # noqa: BLE001 - any raise means "no spec from this call"
+                    reply = {"ok": False}
+                proto_out.write(json.dumps(reply).encode() + b"\n")
+            else:
                 ok = False
-            proto_out.write(b"1\n" if ok else b"0\n")
+                try:
+                    if job["setup"]:
+                        exec(job["setup"], namespace)  # noqa: S102
+                    exec(job["program"], namespace)  # noqa: S102
+                    exec(job["test"], namespace)  # noqa: S102
+                    ok = True
+                except BaseException:  # noqa: BLE001 - any raise (incl. SystemExit) is a failed test
+                    ok = False
+                proto_out.write(b"1\n" if ok else b"0\n")
             proto_out.flush()
         except (json.JSONDecodeError, KeyError, OSError):
             return 1

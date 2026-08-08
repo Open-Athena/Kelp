@@ -106,6 +106,33 @@ def is_valid_python(source: str) -> bool:
         return False
 
 
+def normalize_program(source: str) -> str:
+    """Normalize a program to exactly what :func:`load_corpus` would return.
+
+    ``load_corpus`` rstrips every line on read, so any artifact keyed on
+    program text (spec sidecars via content hash) must be built on the
+    round-tripped form -- otherwise a single trailing space on an internal
+    line silently orphans the program's sidecar entry at train time.
+    """
+    return "\n".join(line.rstrip() for line in source.split("\n"))
+
+
+def corpus_fingerprint(programs: list[str]) -> str:
+    """Stable identity hash for a corpus (order-sensitive, content-exact).
+
+    Recorded in derived artifacts (the precomputed subtree bank) so consumers
+    can detect a corpus/artifact mismatch instead of silently training on the
+    wrong corruption distribution.
+    """
+    import hashlib
+
+    h = hashlib.sha1()
+    for p in programs:
+        h.update(p.encode())
+        h.update(b"\x00")
+    return h.hexdigest()[:16]
+
+
 def extract_spec_asserts(source: str, max_asserts: int = 4) -> str | None:
     """Derive a specification block (assert lines) from a function's doctests.
 

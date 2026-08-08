@@ -33,3 +33,5 @@ alex.env
 
 # Generated slide decks (regenerate with decks/render.sh)
 decks/*.html
+.DS_Store
+pstats

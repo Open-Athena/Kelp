@@ -164,6 +164,58 @@ class SubtreeBank:
         """
         return {(node_type, entry.source) for node_type, entries in self.entries.items() for entry in entries}
 
+    def save(self, path: str, meta: dict | None = None) -> None:
+        """Write the bank to a gzipped-JSON file (local or ``gs://``).
+
+        The precomputed-bank artifact: e-graph augmentation is minutes of
+        CPU-bound startup that a preemptible accelerator job cannot afford to
+        redo per restart (exp12 lost 29 attempts to it). Build once offline
+        with ``kelp.cli.build_bank``, load in seconds with :meth:`load`.
+
+        ``meta`` (corpus hash, augmented flag, seed, ...) is embedded under a
+        reserved ``__meta__`` key so consumers can validate that an artifact
+        matches the corpus/recipe they expect -- a mismatched bank silently
+        changes the training distribution otherwise.
+        """
+        import gzip
+
+        from etils import epath
+
+        payload: dict = {
+            node_type: [[e.source, e.stmt_count] for e in entries] for node_type, entries in self.entries.items()
+        }
+        if meta:
+            payload["__meta__"] = meta
+        out = epath.Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(gzip.compress(json.dumps(payload).encode()))
+
+    @classmethod
+    def load(cls, path: str) -> "SubtreeBank":
+        """Load a bank written by :meth:`save` (local or ``gs://``)."""
+        import gzip
+
+        from etils import epath
+
+        payload = json.loads(gzip.decompress(epath.Path(path).read_bytes()))
+        payload.pop("__meta__", None)
+        return cls(
+            entries={
+                node_type: [SubtreeEntry(source=s, node_type=node_type, stmt_count=n) for s, n in entries]
+                for node_type, entries in payload.items()
+            }
+        )
+
+    @staticmethod
+    def load_meta(path: str) -> dict:
+        """Read just the provenance record from a bank artifact ({} if absent)."""
+        import gzip
+
+        from etils import epath
+
+        payload = json.loads(gzip.decompress(epath.Path(path).read_bytes()))
+        return payload.get("__meta__", {})
+
     def sample(self, node_type: str, rng: random.Random) -> SubtreeEntry | None:
         """Sample a random subtree of the given AST node type.
 
@@ -293,40 +345,6 @@ class SubtreeBank:
             max_subtree_stmts=max_subtree_stmts,
             max_entries_per_type=max_entries_per_type,
         )
-
-    def save(self, path: str | Path) -> None:
-        """Save the bank to a JSON file."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        data = {}
-        for node_type, entries in self.entries.items():
-            data[node_type] = [{"source": e.source, "stmt_count": e.stmt_count} for e in entries]
-
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-
-        logger.info(f"Saved subtree bank ({self.total_entries} entries) to {path}")
-
-    @classmethod
-    def load(cls, path: str | Path) -> "SubtreeBank":
-        """Load a bank from a JSON file."""
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-
-        bank = cls()
-        for node_type, entries in data.items():
-            for entry_data in entries:
-                bank.add(
-                    SubtreeEntry(
-                        source=entry_data["source"],
-                        node_type=node_type,
-                        stmt_count=entry_data["stmt_count"],
-                    )
-                )
-
-        logger.info(f"Loaded subtree bank ({bank.total_entries} entries) from {path}")
-        return bank
 
     def summary(self) -> str:
         """Return a human-readable summary of bank contents."""

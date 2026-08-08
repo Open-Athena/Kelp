@@ -260,3 +260,28 @@ def test_add_entry():
     assert bank.total_entries == 1
     assert bank.has_type("BinOp")
     assert not bank.has_type("Call")
+
+
+def test_bank_save_load_round_trip(tmp_path):
+    """The precomputed-bank artifact preserves every entry exactly -- a loaded
+    bank must be indistinguishable from the built one (same corruption
+    behavior), or precomputing silently changes the training distribution."""
+    bank = SubtreeBank.from_corpus(
+        ["def f(a, b):\n    return a + b\n", "def g(x):\n    if x > 0:\n        return x\n    return 0\n"]
+    )
+    path = str(tmp_path / "deep" / "dirs" / "bank.json.gz")  # parent dirs created by save
+    bank.save(path, meta={"corpus_fingerprint": "abc123", "augmented": True})
+    # The artifact must actually BE gzip: a legacy plain-JSON save/load pair
+    # shadowed the gs://-capable implementation once and slipped through a
+    # round-trip-only test, killing an exp12 submission on the worker.
+    with open(path, "rb") as f:
+        assert f.read(2) == b"\x1f\x8b", "bank artifact is not gzip -- wrong save implementation"
+    loaded = SubtreeBank.load(path)
+    assert SubtreeBank.load_meta(path) == {"corpus_fingerprint": "abc123", "augmented": True}
+    assert "__meta__" not in loaded.entries  # provenance never leaks into entries
+    assert loaded.entries.keys() == bank.entries.keys()
+    assert loaded.source_keys() == bank.source_keys()
+    for nt in bank.entries:
+        assert [(e.source, e.stmt_count) for e in loaded.entries[nt]] == [
+            (e.source, e.stmt_count) for e in bank.entries[nt]
+        ]

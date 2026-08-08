@@ -60,3 +60,31 @@ def test_find_best_checkpoint_picks_highest_step(tmp_path):
 def test_find_best_checkpoint_empty(tmp_path):
     assert find_best_checkpoint(tmp_path) is None
     assert find_best_checkpoint(tmp_path / "does-not-exist") is None
+
+
+def test_find_best_checkpoint_skips_incomplete(tmp_path):
+    """A mid-write preemption leaves a step dir without Orbax's commit marker;
+    resume must fall back to the newest COMPLETE checkpoint instead of
+    crashing on the partial one (the failure that killed exp12 at step 5500)."""
+    from kelp.model.checkpointing import PARAMS_SUBDIR, find_best_checkpoint
+
+    complete = tmp_path / "step-000500" / PARAMS_SUBDIR
+    complete.mkdir(parents=True)
+    # Interrupted local write: params still tmp-named (never renamed into place).
+    partial = tmp_path / "step-001000" / f"{PARAMS_SUBDIR}.orbax-checkpoint-tmp-99"
+    partial.mkdir(parents=True)
+
+    best = find_best_checkpoint(tmp_path)
+    assert best is not None and best.name == "step-000500"
+
+    partial.rename(tmp_path / "step-001000" / PARAMS_SUBDIR)  # commit -> newest wins
+    assert find_best_checkpoint(tmp_path).name == "step-001000"
+
+    # params/ and train_state/ commit as two separate writes; a preemption
+    # between them leaves finalized params with no resumable train state.
+    # Training resume must fall back; eval (params-only) may use the newest.
+    from kelp.model.checkpointing import TRAIN_STATE_SUBDIR
+
+    (tmp_path / "step-000500" / TRAIN_STATE_SUBDIR).mkdir()
+    assert find_best_checkpoint(tmp_path).name == "step-001000"  # eval view
+    assert find_best_checkpoint(tmp_path, require_train_state=True).name == "step-000500"  # resume view

@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from kelp.corpus import extract_docstring, extract_spec_asserts
+from kelp.spec_synthesis import corpus_spec_key, load_spec_map
 from kelp.tree.corruption import corrupt_realistic
 from kelp.tree.subtree_bank import SubtreeBank
 from kelp.tree.tokenizer import EditTokenizer
@@ -50,10 +51,16 @@ class GenerationConfig:
     """Probability of including a docstring prompt when one is available."""
 
     p_spec: float = 0.5
-    """Probability of including a doctest-derived assert spec when one is
+    """Probability of including an executable assert spec when one is
     available (requires a spec_tokens tokenizer; kelp_v2.md M2, issue #147).
     Independent of ``p_prompt`` so the {none, NL, spec, NL+spec} ablation grid
     falls out of the two dropouts."""
+
+    spec_map: dict[str, str] | None = None
+    """Precomputed specs keyed by :func:`kelp.spec_synthesis.corpus_spec_key`
+    (the --spec-file sidecar from prepare_corpus --require-spec). Preferred
+    over inline doctest extraction: sidecar specs are sandbox-validated and
+    include fuzz-synthesized asserts. None falls back to doctests only."""
 
     p_near_miss: float = 0.0
     """On the forward-diffusion branch, probability of corrupting with an e-graph
@@ -75,6 +82,7 @@ class GenerationConfig:
             p_random=config.p_random,
             p_prompt=config.p_prompt,
             p_spec=config.p_spec,
+            spec_map=load_spec_map(config.spec_file) if config.spec_file else None,
             p_near_miss=config.p_near_miss,
             allow_bank_swap=config.allow_bank_swap,
         )
@@ -187,12 +195,18 @@ def generate_example(
         if docstring and rng.random() < gen_cfg.p_prompt:
             prompt_source = docstring
 
-    # Optionally include a doctest-derived assert spec from the *clean* source
-    # (the goal-observation conditioning of kelp_v2.md M2). Independent draw
-    # from the prompt so the conditioning ablation grid is trainable.
+    # Optionally include an executable assert spec for the *clean* source (the
+    # goal-observation conditioning of kelp_v2.md M2). Sidecar specs (sandbox-
+    # validated, fuzz-augmented) take precedence; inline doctest extraction is
+    # the fallback. Independent draw from the prompt so the conditioning
+    # ablation grid is trainable.
     spec_source: str | None = None
     if tokenizer.spec_tokens:
-        spec = extract_spec_asserts(clean_source)
+        spec = None
+        if gen_cfg.spec_map is not None:
+            spec = gen_cfg.spec_map.get(corpus_spec_key(clean_source))
+        if spec is None:
+            spec = extract_spec_asserts(clean_source)
         if spec and rng.random() < gen_cfg.p_spec:
             spec_source = spec
 

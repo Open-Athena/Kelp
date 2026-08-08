@@ -36,6 +36,7 @@ import argparse
 import logging
 import os
 import random
+import time
 from dataclasses import replace
 
 from kelp.cli._logging import configure_logging
@@ -142,6 +143,22 @@ def parse_args() -> argparse.Namespace:
         default=0.5,
         help="Probability of including an assert spec when one is available (default: 0.5). "
         "Independent of --p-prompt so the {none, NL, spec, NL+spec} ablation grid is trainable.",
+    )
+    parser.add_argument(
+        "--bank-file",
+        type=str,
+        default=None,
+        help="Precomputed subtree bank .json.gz from kelp.cli.build_bank (local or gs://). Skips "
+        "the minutes-long bank build + e-graph augmentation at startup -- essential on preemptible "
+        "slices, where un-checkpointed startup work re-runs from zero on every restart. "
+        "When set, --augment is ignored (bake augmentation into the artifact instead).",
+    )
+    parser.add_argument(
+        "--spec-file",
+        type=str,
+        default=None,
+        help="JSONL spec sidecar (local or gs://) from prepare_corpus --spec-output. Sandbox-"
+        "validated specs keyed by program content hash; preferred over inline doctest extraction.",
     )
     parser.add_argument(
         "--p-near-miss",
@@ -255,17 +272,60 @@ def main():
         corpus = TOY_CORPUS
         logger.info(f"Using toy corpus ({len(corpus)} programs)")
 
-    # Build subtree bank and tokenizer.
-    bank = SubtreeBank.from_corpus(corpus)
-    if args.augment:
-        rng = random.Random(args.seed)
-        bank = augment_bank(bank, rng, n_renamed=2, n_perturbed=2, synthetic_count=50)
+    # Build subtree bank and tokenizer. A precomputed --bank-file skips the
+    # minutes-long augmentation startup that a preemptible slice cannot afford
+    # to redo per restart (see kelp.cli.build_bank).
+    if args.bank_file:
+        start = time.time()
+        # Provenance gate: a bank built from a different corpus silently
+        # changes the corruption distribution for the whole run. Old artifacts
+        # without metadata get a warning; a recorded mismatch is fatal.
+        from kelp.corpus import corpus_fingerprint
+
+        meta = SubtreeBank.load_meta(args.bank_file)
+        if not meta:
+            logger.warning(f"Bank {args.bank_file} has no provenance metadata; cannot verify corpus match")
+        else:
+            expected = corpus_fingerprint(corpus)
+            recorded = meta.get("corpus_fingerprint")
+            if recorded is not None and recorded != expected:
+                raise ValueError(
+                    f"Bank/corpus mismatch: {args.bank_file} was built from "
+                    f"{meta.get('corpus_file')} (fingerprint {recorded}), but the loaded corpus "
+                    f"fingerprint is {expected}. Rebuild with kelp.cli.build_bank or fix --corpus-file."
+                )
+            if args.augment and meta.get("augmented") is False:
+                logger.warning("--augment requested but the precomputed bank is UNAUGMENTED; using it as-is")
+        bank = SubtreeBank.load(args.bank_file)
+        logger.info(f"Loaded precomputed bank from {args.bank_file} in {time.time() - start:.1f}s (--augment ignored)")
+    else:
+        bank = SubtreeBank.from_corpus(corpus)
+        if args.augment:
+            rng = random.Random(args.seed)
+            bank = augment_bank(bank, rng, n_renamed=2, n_perturbed=2, synthetic_count=50)
     tokenizer = EditTokenizer(
         max_seq_len=model_config.max_seq_len,
         prompt_tokens=model_config.prompt_tokens,
         spec_tokens=model_config.spec_tokens,
     )
     logger.info(f"Subtree bank: {bank.total_entries} entries across {len(bank.entries)} node types")
+
+    # Spec sidecar coverage check: a content-hash key that fails to match its
+    # corpus program is SILENT (generation falls back to doctests/None), so a
+    # keying bug quietly weakens the very conditioning signal a spec run
+    # exists to train. Surface the hit rate loudly at startup.
+    if args.spec_file:
+        from kelp.spec_synthesis import corpus_spec_key, load_spec_map
+
+        spec_map = load_spec_map(args.spec_file)
+        hits = sum(1 for p in corpus if corpus_spec_key(p) in spec_map)
+        rate = hits / max(len(corpus), 1)
+        logger.info(f"Spec sidecar coverage: {hits}/{len(corpus)} corpus programs ({rate:.1%})")
+        if rate < 0.5:
+            logger.warning(
+                "Spec coverage below 50% -- keys may not match the loaded corpus text "
+                "(sidecars must be built on load_corpus-normalized programs)."
+            )
 
     # Override model config vocab_size to match tokenizer.
     model_config = replace(model_config, vocab_size=tokenizer.vocab_size)
@@ -288,6 +348,7 @@ def main():
         curriculum_warmup_fraction=args.curriculum_warmup_fraction,
         p_prompt=args.p_prompt,
         p_spec=args.p_spec,
+        spec_file=args.spec_file,
         p_near_miss=args.p_near_miss,
         p_random=args.p_random,
         allow_bank_swap=args.allow_bank_swap,
@@ -298,7 +359,7 @@ def main():
     initial_state = None
     start_step = 0
     if args.resume and args.output_dir:
-        latest = find_best_checkpoint(args.output_dir)
+        latest = find_best_checkpoint(args.output_dir, require_train_state=True)
         if latest is not None:
             logger.info(f"Resuming from checkpoint: {latest}")
             initial_state = load_resume_state(latest, train_cfg)

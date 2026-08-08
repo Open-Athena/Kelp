@@ -44,51 +44,68 @@ map of the project:
 
 | Paper | Kelp | Status |
 |---|---|---|
-| Small subtree mutations, s ~ U[1,5] | Realistic in-context corruption, multi-step | ✅ (multi-step restored in exp11) |
+| Small subtree mutations, s ~ U[1,5] | Realistic in-context corruption, multi-step | ✅ |
 | Reverse-path single-step targets | `tree_diff` path, random-step supervision | ✅ |
-| ρ-mixture of random inits (long-range) | `--p-random` random-program pairs | ✅ (now explicit) |
-| Goal observation x₀ (target image) | Spec: test asserts / I-O + NL intent | 🟡 spec blocks landed, unproven (M2) |
-| Execution feedback x_t (current render) | Run tests per edit; feed back failures | ❌ the known frontier (M3) |
+| ρ-mixture of random inits (long-range) | `--p-random` random-program pairs | ✅ |
+| Goal observation x₀ (target image) | Spec: test asserts / I-O + NL intent | ❌ tested (v12): no measurable effect |
+| Execution feedback x_t (current render) | Run tests per edit; feed back failures | ⏸ paused pending v12's mechanical question |
 | Grammar-masked decoding | Byte+position decode, AST position masks | 🟡 validity 100%; position constraint optional |
-| % solved vs. compute | Tasks fully repaired, CIs, n=500 | ✅ (as of the M0 eval overhaul) |
+| % solved vs. compute | Tasks fully repaired, CIs, n=500, broken-corruption gate | ✅ (hardened twice: v11, v12) |
 
-The missing middle rows are the working explanation for the project's core
-result so far: **100% syntactic validity with low semantic correctness**. A
-model that never observes the spec or its own execution output can localize
-and produce valid edits but must guess intended behavior. Closing that gap —
-not capacity, which measured flat at n=500 — is the current direction. Full
-design, milestones (M0–M6), and kill criteria: [docs/kelp_v2.md](docs/kelp_v2.md).
+The middle rows were the working explanation for the project's core result —
+**100% syntactic validity with low semantic correctness** — until v12 tested it:
+supplying the spec produced *no measurable lift*, and neither did placing the
+clean program itself in the prompt (the oracle arm). The current hypothesis is
+**mechanical**: a from-scratch 115M byte-level model shows no evidence of using
+in-context conditioning at all, which points at pretrained transfer and
+decoding constraints rather than richer signals. Full design, milestones
+(M0–M6), and kill criteria: [docs/kelp_v2.md](docs/kelp_v2.md).
 
 ## Architecture
 
 ### The Pipeline
 
 ```
-  Clean Program     Corrupted Program       Edit Sequence         Repaired Program
-  ┌───────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
-  │ def add(   │     │ def add(      │     │ POS_7         │     │ def add(      │
-  │   a, b):   │ ──► │   a, b):     │ ──► │ return a + b  │ ──► │   a, b):     │
-  │   return   │     │   return     │     │ EOS           │     │   return     │
-  │   a + b    │     │   len(a)     │     │               │     │   a + b      │
-  └───────────┘     └───────────────┘     └───────────────┘     └───────────────┘
-                    Forward Process        AR Model Predicts      Applied Edit
-                    (AST Corruption)       (Position + Tokens)
+  Clean Program      Corrupted Program     Edit Sequence         Repaired Program
+  ┌────────────┐     ┌────────────┐     ┌───────────────┐     ┌────────────┐
+  │ def add(   │     │ def add(   │     │ POS_7         │     │ def add(   │
+  │   a, b):   │ ──► │   a, b):   │ ──► │ return a + b  │ ──► │   a, b):   │
+  │   return   │     │   return   │     │ EOS           │     │   return   │
+  │   a + b    │     │   a - b    │     │               │     │   a + b    │
+  └────────────┘     └────────────┘     └───────────────┘     └────────────┘
+                     Forward Process     AR Model Predicts     Applied Edit
+                     (realistic bug:     (Position + Tokens)
+                      operator flip)
 ```
 
 ### Forward Process (Corruption)
 
-The forward process corrupts a clean Python program through a sequence of AST-level mutations:
+Since v9, the default forward process plants **realistic in-context bugs**
+(`kelp.tree.corruption.corrupt_realistic`, shared verbatim between training and
+eval), trying in order:
 
-- Parse the program into an AST
-- Select a random non-root subtree node
-- Replace it with a type-compatible subtree from the **SubtreeBank** (a pre-indexed palette of real code fragments)
-- The result is always a syntactically valid Python program
+1. **Near-miss mutations**: e-graph-derived operator flips (`x > y` → `x < y`,
+   `a + b` → `a - b`) and comparison/boolean inversions — the kinds of bugs a
+   programmer actually writes
+2. **In-context swaps**: replace an expression with another expression drawn
+   from the *same program's* scope (right names, wrong logic)
+3. **Realistic-or-drop**: a program admitting no realistic corruption is
+   *dropped*, not grafted with an out-of-context fragment
 
-Multiple corruption steps create a "diffusion trajectory" — a sequence of progressively more corrupted programs, each one valid Python.
+Every corrupted state is still syntactically valid Python, and multiple steps
+create the "diffusion trajectory" of progressively more corrupted programs.
+The older bank-swap corruption (splice a type-compatible SubtreeBank fragment)
+survives only as an explicit fallback and as the "unmatched" generalization arm
+in evals — moving off it as the default was the v9 change that took repair from
+~2% to ~15%.
 
 ### SubtreeBank
 
-The SubtreeBank is a dictionary mapping AST node types (BinOp, Return, If, etc.) to lists of real code fragments extracted from the training corpus. It is augmented from multiple sources:
+The SubtreeBank is a dictionary mapping AST node types (BinOp, Return, If,
+etc.) to lists of real code fragments extracted from the training corpus.
+Today it powers the bank-swap corruption fallback, the "unmatched" eval arm,
+and augmentation diversity (it is no longer the primary corruption source —
+see Forward Process above). It is augmented from multiple sources:
 
 - **Original**: subtrees extracted directly from training programs
 - **Renamed**: variable names systematically swapped for diversity
@@ -98,12 +115,26 @@ The SubtreeBank is a dictionary mapping AST node types (BinOp, Return, If, etc.)
 
 ### Training
 
-Each training step:
+Each training example:
 1. Pick a random clean program from the corpus
-2. Corrupt it N steps using the SubtreeBank (forward process)
+2. Corrupt it with 1..S realistic bugs (forward process above) — or, with
+   probability `p_random` (default 0.2, the paper's ρ-mixture), use a *different
+   corpus program* as the "corrupted" state, teaching long-range repair paths
 3. Compute the `TreeDiff` — the minimal edit path back to the clean program
-4. Pick a random step along that path as the training target
-5. The model learns to predict: `[position_token, replacement_tokens..., EOS]`
+4. Pick a random step along that path: apply the prefix to build the input
+   state, supervise the single next edit
+5. Optionally prepend **conditioning**: the docstring as a natural-language
+   prompt (probability `p_prompt`) and, for spec-trained models, executable
+   test asserts as a spec block (probability `p_spec`, independent — so the
+   {none, NL, spec, NL+spec} ablation falls out of the two dropouts)
+
+The encoded sequence (loss only on the edit target):
+
+```
+  ┌── conditioning prefix (optional) ──────────┐┌─ input state ─┐┌──── edit target ────┐
+  [PROMPT] docstring [/PROMPT] [SPEC] asserts [/SPEC] program-bytes <SOS> <POS k> repl <EOS>
+   ····························· loss masked ····························  ██ supervised ██
+```
 
 The model is a standard causal transformer (using [Grug](https://github.com/marin-community/marin/tree/main/lib/levanter/src/levanter/grug) building blocks from Levanter) that operates on flat token sequences, not tree structures directly.
 
@@ -111,10 +142,11 @@ The model is a standard causal transformer (using [Grug](https://github.com/mari
 
 At inference time, the model iteratively repairs a corrupted program:
 
-1. Tokenize the corrupted program
+1. Tokenize the conditioning prefix (task text as the prompt; test asserts as
+   the spec, for spec-trained checkpoints) plus the corrupted program
 2. The model autoregressively predicts an edit: position token → replacement tokens → EOS
 3. Apply the edit to produce a new (hopefully less corrupted) program
-4. Repeat for up to `max_depth` steps
+4. Repeat for up to `max_depth` steps, re-tokenizing its own output each time
 
 Two inference strategies:
 - **Best-of-N**: generate N independent repair trajectories, return the best
@@ -530,6 +562,70 @@ targets, explicit `--p-random 0.2`), all else held at exp10-control values.
   corruption recipe, corpus realism) are now measured flat — **conditioning
   (spec + execution feedback, kelp_v2.md M2/M3) is the only untested lever**,
   exactly as the design doc predicted.
+
+### v12: Spec conditioning + the honest metric (`exp12`) — no conditioning effect; the bottleneck is mechanical
+
+v11 left conditioning as the only untested lever. v12 tested it properly, and
+along the way fixed the metric that had been flattering every previous result.
+
+**The metric fix first.** Extracting demo animations exposed that the eval
+counted *behavior-preserving corruptions* as repairs: a corruption that never
+broke the tests lets the **unedited** candidate "solve" the trial. Cross-checking
+stored candidates showed **96% of sampled v11 "solved" outcomes involved no
+repair at all**. The eval now executes each corrupted program against the
+task's asserts and skips trials that still pass everything (fingerprinted, so
+stale shards can't be reused).
+
+**Training.** One 115M model on `curated_v3` — 5,687 standalone Stack Edu
+functions, 100% docstring'd + corruptible + **spec'd** (sandbox-validated
+assert sidecars synthesized by executing each function) — with independent
+prompt/spec dropout (`p_prompt=0.5`, `p_spec=0.5`), multi-step corruption, 50K
+steps. (A post-hoc review audit found a sidecar-keying bug: effective spec
+coverage during training was **84.8%**, not 100% — 864 programs' specs were
+silently orphaned by a whitespace-normalization asymmetry, since fixed. This
+dilutes but cannot explain the null, and the oracle arm — which bypasses the
+sidecar entirely — is unaffected.) The run also battle-hardened training
+against preemption (precomputed
+bounded-e-graph bank artifact: 35 min of startup → 57 s; 500-step checkpoints;
+resume that skips mid-write-corrupted checkpoints) after earlier submissions
+lost 29 attempts to scheduling churn.
+
+**Evaluation — the conditioning ablation over ONE checkpoint (n=494, tasks
+fully repaired, bootstrap 95% CIs, broken-corruption gate on):**
+
+| Arm | Solved [95% CI] | Best-of-16 (partial) |
+|---|---|---|
+| none (no conditioning) | 0.4% [0.0, 1.0] | 18.5% |
+| NL prompt only | 0.6% [0.0, 1.4] | 18.0% |
+| spec, held-out assert | 1.0% [0.2, 2.0] | 18.8% |
+| NL+spec, held-out assert | 1.0% [0.2, 2.0] | 19.0% |
+| NL+spec, all asserts shown | 0.8% [0.2, 1.6] | 18.6% |
+| **oracle: clean program as spec** | **0.6% [0.0, 1.4]** | 18.2% |
+| v11 model, requantified | 1.2% [0.4, 2.2] | 18.4% |
+
+**What we learned:**
+- **The honest repair rate is ~1%.** v11's "22% solved" was ~18× metric
+  inflation, now measured directly. Corollary: earlier cross-model comparisons
+  (capacity, corruption recipe) were made on the inflated metric and are
+  unresolved at the true floor.
+- **Spec conditioning produced no measurable effect.** All arms statistically
+  indistinguishable; the held-out-assert protocol rules out assert-copying as
+  a confound in either direction.
+- **The oracle arm is the decisive datum: flat.** The model cannot repair the
+  program even with the clean program *in its prompt*. (Caveat: a whole
+  program is out-of-distribution for a spec block trained on asserts — but
+  combined with spec ≈ NL ≈ none in-distribution, there is no evidence the
+  model exploits in-context conditioning at all.)
+- Per the pre-registered decision rules, this fires the **mechanical-bottleneck**
+  branch: stop investing in richer conditioning signals. The live hypotheses
+  are architectural — **pretrained transfer** (does a model that already reads
+  context change the answer?), position-constrained decoding, and the
+  byte-level tokenizer itself. Execution-feedback work is paused until any
+  in-context signal demonstrably moves behavior.
+
+A negative result, delivered by an instrument that finally can't flatter: the
+fully-repaired numbers above are the first in this README that mean exactly
+what they say.
 
 ## Project Structure
 

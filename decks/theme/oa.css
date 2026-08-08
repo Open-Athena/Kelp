@@ -141,3 +141,14 @@
 .reveal .controls { color: var(--oa-copper); }
 .reveal .slides section .fragment.visible { opacity: 1; }
 .reveal .slides > section:first-child > *:first-child { margin-top: 0; }
+
+
+.logo {
+  height: 100px;
+}
+
+.slide-img {
+  height: 300px;
+}
+/* Small right-aligned image credit line. */
+.reveal .attribution { font-size: 0.5em; color: var(--oa-text-muted); text-align: right; margin-top: -0.4em; }

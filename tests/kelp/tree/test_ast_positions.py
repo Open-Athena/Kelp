@@ -73,3 +73,18 @@ def test_valid_edit_start_offsets_matches_find_span_end():
     # an offset mid-token is not a node start
     assert 3 not in starts
     assert find_span_end(src, 3) is None
+
+
+def test_linecol_handles_utf8_byte_columns():
+    """ast reports byte columns; spans on lines with non-ASCII text before the
+    node must still slice the right characters (surfaced by Stack Edu content:
+    mislocated spans, and IndexError past end-of-source in operator scanning)."""
+    import ast as ast_mod
+
+    source = 'x = "ππ" + y\n'  # two 2-byte chars before the operator
+    tree = ast_mod.parse(source)
+    binop = tree.body[0].value
+    start, end = node_source_span(source, binop.right)
+    assert source[start:end] == "y"
+    left = node_source_span(source, binop.left)
+    assert source[left[0] : left[1]] == '"ππ"'
