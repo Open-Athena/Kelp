@@ -152,6 +152,27 @@ def evaluate_mbpp_task(
     clean = task["clean"]
     tests = task["tests"]
     setup_code = task.get("setup_code", "")
+
+    # A single-assert task cannot be held out: showing K-1 of 1 asserts means
+    # showing THE scoring assert -- exactly the copying circularity the holdout
+    # arms exist to remove. Exclude such tasks from holdout evals entirely
+    # rather than silently contaminating the honest aggregate.
+    if spec_holdout and len(tests) < 2:
+        return {
+            "task_id": task["task_id"],
+            "text": task["text"][:100],
+            "num_trials": 0,
+            "holdout_excluded": True,
+            "total_candidates": 0,
+            "valid_rate": 0.0,
+            "exact_match_rate": 0.0,
+            "avg_test_pass_rate": 0.0,
+            "best_test_pass_rate": 0.0,
+            "solved": False,
+            "best_candidate": "",
+            "clean": clean.strip()[:200],
+        }
+
     prompt = task.get("text") if tokenizer.prompt_tokens and conditioning in ("both", "nl") else None
     # Spec conditioning (issue #147). NOTE the shown asserts also score the
     # metric and drive best-of-N reranking (partial circularity) -- the
@@ -192,7 +213,14 @@ def evaluate_mbpp_task(
         # that still passes every assert lets the UNEDITED candidate "solve"
         # the trial (96% of sampled exp11 'solved' outcomes -- issue #154).
         # Skip them like textual no-ops; the fingerprint carries this change.
-        if sum(1 for t in tests if run_mbpp_test(corrupted, t, setup_code, timeout_s=test_timeout)) == len(tests):
+        # all() short-circuits on the first failing test (the common case);
+        # `tests and` keeps empty test lists from vacuously skipping every
+        # trial; the gate timeout is always bounded because -- unlike candidate
+        # scoring, where 0-disables predates this gate -- corrupted programs
+        # were never executed before it existed, and an unbounded pre-repair
+        # execution of a while-True corruption would hang the eval.
+        gate_timeout = test_timeout if test_timeout > 0 else 5.0
+        if tests and all(run_mbpp_test(corrupted, t, setup_code, timeout_s=gate_timeout) for t in tests):
             continue
 
         total_trials += 1
@@ -408,10 +436,13 @@ def _eval_fingerprint(args: argparse.Namespace, ckpt_dir: epath.Path) -> str:
             "conditioning": args.conditioning,
             "spec_holdout": args.spec_holdout,
             "spec_oracle": args.spec_oracle,
-            # Constant fingerprint version marker: trials whose corruption
-            # still passes every assert are skipped as of issue #154. Ensures
-            # pre-fix shards (inflated by no-repair "solves") are never reused.
+            # Constant fingerprint version markers: trials whose corruption
+            # still passes every assert are skipped as of issue #154 (ensures
+            # pre-fix shards, inflated by no-repair "solves", are never
+            # reused), and holdout arms exclude single-assert tasks (whose
+            # lone scoring assert would otherwise be shown to the model).
             "skip_unbroken": True,
+            "holdout_min_tests": 2,
         }
     )
 

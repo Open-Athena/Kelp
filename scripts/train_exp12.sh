@@ -63,7 +63,6 @@ uv run kelp-launch "${LAUNCH_FLAGS[@]}" \
     --spec-file "$SPEC_FILE" \
     --bank-file "$BANK_FILE" \
     --steps "$STEPS" \
-    --augment \
     --prompt-conditioning \
     --spec-conditioning \
     --p-prompt "$P_PROMPT" \

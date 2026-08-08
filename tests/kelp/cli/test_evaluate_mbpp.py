@@ -145,3 +145,24 @@ def test_behavior_preserving_corruptions_are_skipped(monkeypatch):
     # with the clean program as candidate, genuinely solved.
     assert result["num_trials"] == 1
     assert result["solved"] is True
+
+
+def test_holdout_excludes_single_assert_tasks():
+    """A K=1 task cannot be held out -- showing K-1 of 1 asserts would show THE
+    scoring assert. Holdout evals must exclude such tasks, not silently leak."""
+    import jax
+
+    from kelp.cli import evaluate_mbpp as em
+    from kelp.tree.tokenizer import EditTokenizer
+
+    task = {"task_id": 2, "text": "t", "clean": "def f():\n    return 1", "tests": ["assert f() == 1"]}
+    result = em.evaluate_mbpp_task(
+        task=task,
+        params=None,
+        config=None,
+        tokenizer=EditTokenizer(max_seq_len=128),
+        bank=None,
+        key=jax.random.PRNGKey(0),
+        spec_holdout=True,
+    )
+    assert result["num_trials"] == 0 and result.get("holdout_excluded") is True

@@ -202,7 +202,7 @@ def load_training_checkpoint(
     return params, extras["opt_state"], int(extras["step"]), extras["key"], config
 
 
-def _is_complete_checkpoint(ckpt_dir: epath.Path) -> bool:
+def _is_complete_checkpoint(ckpt_dir: epath.Path, require_train_state: bool = False) -> bool:
     """True iff the checkpoint finished committing.
 
     A preemption can kill the job mid-write, leaving a partial ``step-XXXXXX``
@@ -213,14 +213,24 @@ def _is_complete_checkpoint(ckpt_dir: epath.Path) -> bool:
     one whose restore-side counterpart raises 'Found incomplete checkpoint' --
     which understands both atomic-rename (local) and commit-marker (GCS)
     filesystems.
+
+    ``params/`` and ``train_state/`` are committed as two separate Orbax
+    writes, in that order; a preemption BETWEEN them leaves finalized params
+    with no resumable train state. Training resume must therefore pass
+    ``require_train_state=True``; eval only loads params and need not.
     """
     import orbax.checkpoint as ocp
 
     params_dir = ckpt_dir / PARAMS_SUBDIR
-    return params_dir.exists() and ocp.utils.is_checkpoint_finalized(params_dir)
+    if not (params_dir.exists() and ocp.utils.is_checkpoint_finalized(params_dir)):
+        return False
+    if require_train_state:
+        ts_dir = ckpt_dir / TRAIN_STATE_SUBDIR
+        return ts_dir.exists() and ocp.utils.is_checkpoint_finalized(ts_dir)
+    return True
 
 
-def find_best_checkpoint(checkpoint_dir: str | os.PathLike) -> epath.Path | None:
+def find_best_checkpoint(checkpoint_dir: str | os.PathLike, require_train_state: bool = False) -> epath.Path | None:
     """Find the COMPLETE checkpoint with the highest step number.
 
     Incomplete checkpoints (no Orbax commit marker; see
@@ -229,6 +239,8 @@ def find_best_checkpoint(checkpoint_dir: str | os.PathLike) -> epath.Path | None
 
     Args:
         checkpoint_dir: Parent directory containing ``step-XXXXXX`` subdirectories.
+        require_train_state: Also require a finalized ``train_state/`` --
+            training resume needs this; eval (params-only) does not.
 
     Returns:
         Path to the best complete checkpoint, or None if no checkpoints found.
@@ -241,7 +253,7 @@ def find_best_checkpoint(checkpoint_dir: str | os.PathLike) -> epath.Path | None
         key=lambda d: int(d.name.split("-")[1]),
     )
     for d in reversed(ckpt_dirs):
-        if _is_complete_checkpoint(d):
+        if _is_complete_checkpoint(d, require_train_state=require_train_state):
             return d
         logger.warning(f"Skipping incomplete checkpoint {d} (no commit marker; interrupted mid-write)")
     return None

@@ -49,7 +49,7 @@ from pathlib import Path
 
 from etils import epath
 
-from kelp.corpus import CORPUS_SEPARATOR, extract_docstring
+from kelp.corpus import CORPUS_SEPARATOR, extract_docstring, normalize_program
 from kelp.eval_tasks import EVAL_SIGNATURES
 from kelp.tree.corruption import has_corruptible_content
 
@@ -559,13 +559,19 @@ def main():
         filtered = [p for p in filtered if has_corruptible_content(p)]
         logger.info(f"After --require-corruptible: {len(filtered)} programs ({before - len(filtered)} dropped)")
 
+    # Normalize each program to exactly what load_corpus will return at train
+    # time (per-line rstrip). Content-hash-keyed sidecars are built from this
+    # text; without it, a trailing space on any internal line silently orphans
+    # the program's spec at training (the sidecar-key mismatch bug).
+    filtered = [normalize_program(p) for p in filtered]
+
     # Optional: keep only functions with a synthesizable executable spec
     # (kelp_v2.md M2). Executes every candidate in the sandboxed worker; on
     # curated_v2/stack-edu this drops ~90% (methods, I/O-bound), so aim the
     # raw pull ~10x above the target corpus size.
     spec_lines: list[str] = []
     if args.require_spec:
-        from kelp.spec_synthesis import corpus_spec_key, synthesize_spec
+        from kelp.spec_synthesis import sidecar_record, synthesize_spec
 
         before = len(filtered)
         kept: list[str] = []
@@ -573,7 +579,7 @@ def main():
             result = synthesize_spec(p)
             if result.spec is not None:
                 kept.append(p)
-                spec_lines.append(json.dumps({"key": corpus_spec_key(p), "spec": result.spec}))
+                spec_lines.append(sidecar_record(p, result))
         filtered = kept
         logger.info(f"After --require-spec: {len(filtered)} programs ({before - len(filtered)} dropped)")
 

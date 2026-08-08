@@ -50,3 +50,31 @@ def test_synthesize_skips_unfuzzable_and_impure():
     assert synthesize_spec("def f(*args):\n    return args\n").n_fuzz == 0
     impure = "import random\ndef r(a):\n    return random.random() + a\n"
     assert synthesize_spec(impure).spec is None
+
+
+def test_impure_function_doctest_is_rejected():
+    """A nondeterministic function's doctest must not become a training spec,
+    even if a lucky run would pass it -- impurity gates the doctest layer too."""
+    src = (
+        'import random\ndef roll():\n    """Roll.\n\n    >>> roll()\n    3\n    """\n    return random.randint(1, 6)\n'
+    )
+    result = synthesize_spec(src)
+    assert result.spec is None and result.skip_reason == "impure"
+
+
+def test_sidecar_key_survives_corpus_round_trip(tmp_path):
+    """Sidecar keys are built on normalized text; a program with trailing
+    whitespace on an internal line must produce the SAME key after being
+    written and reloaded through load_corpus (which rstrips every line) --
+    the mismatch here silently orphaned specs in exp12 training."""
+    from kelp.cli.prepare_corpus import write_corpus
+    from kelp.corpus import load_corpus, normalize_program
+    from kelp.spec_synthesis import corpus_spec_key
+
+    raw = "def f(x):  \n    y = 1  \n    return x + y\n"
+    normalized = normalize_program(raw)
+    assert normalized != raw  # the trailing spaces are real
+    out = tmp_path / "c.txt"
+    write_corpus([normalized], out)
+    (reloaded,) = load_corpus(str(out))
+    assert corpus_spec_key(reloaded) == corpus_spec_key(normalized)

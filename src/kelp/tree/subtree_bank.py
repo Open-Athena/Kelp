@@ -164,22 +164,31 @@ class SubtreeBank:
         """
         return {(node_type, entry.source) for node_type, entries in self.entries.items() for entry in entries}
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, meta: dict | None = None) -> None:
         """Write the bank to a gzipped-JSON file (local or ``gs://``).
 
         The precomputed-bank artifact: e-graph augmentation is minutes of
         CPU-bound startup that a preemptible accelerator job cannot afford to
         redo per restart (exp12 lost 29 attempts to it). Build once offline
         with ``kelp.cli.build_bank``, load in seconds with :meth:`load`.
+
+        ``meta`` (corpus hash, augmented flag, seed, ...) is embedded under a
+        reserved ``__meta__`` key so consumers can validate that an artifact
+        matches the corpus/recipe they expect -- a mismatched bank silently
+        changes the training distribution otherwise.
         """
         import gzip
 
         from etils import epath
 
-        payload = {
+        payload: dict = {
             node_type: [[e.source, e.stmt_count] for e in entries] for node_type, entries in self.entries.items()
         }
-        epath.Path(path).write_bytes(gzip.compress(json.dumps(payload).encode()))
+        if meta:
+            payload["__meta__"] = meta
+        out = epath.Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(gzip.compress(json.dumps(payload).encode()))
 
     @classmethod
     def load(cls, path: str) -> "SubtreeBank":
@@ -189,12 +198,23 @@ class SubtreeBank:
         from etils import epath
 
         payload = json.loads(gzip.decompress(epath.Path(path).read_bytes()))
+        payload.pop("__meta__", None)
         return cls(
             entries={
                 node_type: [SubtreeEntry(source=s, node_type=node_type, stmt_count=n) for s, n in entries]
                 for node_type, entries in payload.items()
             }
         )
+
+    @staticmethod
+    def load_meta(path: str) -> dict:
+        """Read just the provenance record from a bank artifact ({} if absent)."""
+        import gzip
+
+        from etils import epath
+
+        payload = json.loads(gzip.decompress(epath.Path(path).read_bytes()))
+        return payload.get("__meta__", {})
 
     def sample(self, node_type: str, rng: random.Random) -> SubtreeEntry | None:
         """Sample a random subtree of the given AST node type.

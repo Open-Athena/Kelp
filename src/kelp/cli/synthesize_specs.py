@@ -14,7 +14,6 @@ Usage:
 """
 
 import argparse
-import json
 import logging
 import sys
 import time
@@ -24,7 +23,7 @@ from etils import epath
 from kelp.cli._logging import configure_logging
 from kelp.cli._test_runner import default_runner
 from kelp.corpus import load_corpus
-from kelp.spec_synthesis import corpus_spec_key, synthesize_spec
+from kelp.spec_synthesis import sidecar_record, synthesize_spec
 
 logger = logging.getLogger(__name__)
 
@@ -83,16 +82,7 @@ def main() -> int:
                 n_doctest_only += 1
             else:
                 n_fuzz_only += 1
-            lines.append(
-                json.dumps(
-                    {
-                        "key": corpus_spec_key(source),
-                        "spec": result.spec,
-                        "n_doctest": result.n_doctest,
-                        "n_fuzz": result.n_fuzz,
-                    }
-                )
-            )
+            lines.append(sidecar_record(source, result))
         if args.report_every and (i + 1) % args.report_every == 0:
             logger.info(f"[{i + 1}/{len(corpus)}] coverage so far: {n_any / (i + 1):.1%} ({time.time() - start:.0f}s)")
 

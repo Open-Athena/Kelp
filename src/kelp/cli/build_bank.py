@@ -21,7 +21,7 @@ import sys
 import time
 
 from kelp.cli._logging import configure_logging
-from kelp.corpus import load_corpus
+from kelp.corpus import corpus_fingerprint, load_corpus
 from kelp.tree.augmentation import augment_bank
 from kelp.tree.subtree_bank import SubtreeBank
 
@@ -56,7 +56,16 @@ def main() -> int:
         bank = augment_bank(bank, random.Random(args.seed), n_renamed=2, n_perturbed=2, synthetic_count=50)
         logger.info(f"Augmented bank: {bank.total_entries} entries ({time.time() - start:.0f}s total)")
 
-    bank.save(args.output)
+    bank.save(
+        args.output,
+        meta={
+            "corpus_fingerprint": corpus_fingerprint(corpus),
+            "corpus_file": args.corpus_file,
+            "augmented": bool(args.augment),
+            "seed": args.seed,
+            "total_entries": bank.total_entries,
+        },
+    )
     logger.info(f"Wrote {bank.total_entries} entries to {args.output}")
     return 0
 

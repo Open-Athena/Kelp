@@ -134,13 +134,20 @@ def synthesize_spec(
     runner = runner or default_runner()
     result = SpecResult()
 
-    # Layer 1: doctests, kept only if they execute green.
-    doctest_spec = extract_spec_asserts(source, max_asserts=max_asserts)
-    if doctest_spec:
-        for line in doctest_spec.splitlines():
-            if runner.run(source, line, timeout_s=timeout_s):
-                result.asserts.append(line)
-                result.n_doctest += 1
+    # Impurity gates BOTH layers: a nondeterministic function's doctest can
+    # pass on a lucky roll just as a fuzz call can, and a flaky assert in the
+    # sidecar is exactly what this module promises to prevent.
+    impure = _mentions_impure_names(source)
+
+    # Layer 1: doctests, kept only if they execute green TWICE -- the same
+    # determinism standard the fuzz layer gets from the worker's double-eval.
+    if not impure:
+        doctest_spec = extract_spec_asserts(source, max_asserts=max_asserts)
+        if doctest_spec:
+            for line in doctest_spec.splitlines():
+                if runner.run(source, line, timeout_s=timeout_s) and runner.run(source, line, timeout_s=timeout_s):
+                    result.asserts.append(line)
+                    result.n_doctest += 1
 
     fn = _first_function(source)
     if fn is None:
@@ -153,7 +160,7 @@ def synthesize_spec(
     # -- defaults cover the rest, which is how these functions are actually
     # called and vastly widens the hit surface on library code. Skip methods
     # (an unbound `self` can't be faked with pool values), *args/**kwargs,
-    # wide signatures (combinatorics), and obviously impure functions.
+    # wide signatures (combinatorics), and impure functions.
     arg_names = [a.arg for a in fn.args.args]
     n_required = len(arg_names) - len(fn.args.defaults)
     if arg_names and arg_names[0] in ("self", "cls"):
@@ -162,7 +169,7 @@ def synthesize_spec(
     if fn.args.vararg or fn.args.kwarg or n_required > 4:
         result.skip_reason = "wide_signature"
         return result
-    if _mentions_impure_names(source):
+    if impure:
         result.skip_reason = "impure"
         return result
 
@@ -197,6 +204,22 @@ def synthesize_spec(
 def corpus_spec_key(source: str) -> str:
     """Stable sidecar key for a corpus program (content hash, order-independent)."""
     return hashlib.sha1(source.encode()).hexdigest()[:16]
+
+
+def sidecar_record(source: str, result: SpecResult) -> str:
+    """One JSONL sidecar line for a program's spec -- the single source of
+    truth for the record schema, shared by every sidecar writer (prepare_corpus
+    --require-spec and kelp.cli.synthesize_specs) so they cannot drift."""
+    import json
+
+    return json.dumps(
+        {
+            "key": corpus_spec_key(source),
+            "spec": result.spec,
+            "n_doctest": result.n_doctest,
+            "n_fuzz": result.n_fuzz,
+        }
+    )
 
 
 def load_spec_map(path: str) -> dict[str, str]:

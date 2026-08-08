@@ -580,7 +580,12 @@ stale shards can't be reused).
 functions, 100% docstring'd + corruptible + **spec'd** (sandbox-validated
 assert sidecars synthesized by executing each function) — with independent
 prompt/spec dropout (`p_prompt=0.5`, `p_spec=0.5`), multi-step corruption, 50K
-steps. The run also battle-hardened training against preemption (precomputed
+steps. (A post-hoc review audit found a sidecar-keying bug: effective spec
+coverage during training was **84.8%**, not 100% — 864 programs' specs were
+silently orphaned by a whitespace-normalization asymmetry, since fixed. This
+dilutes but cannot explain the null, and the oracle arm — which bypasses the
+sidecar entirely — is unaffected.) The run also battle-hardened training
+against preemption (precomputed
 bounded-e-graph bank artifact: 35 min of startup → 57 s; 500-step checkpoints;
 resume that skips mid-write-corrupted checkpoints) after earlier submissions
 lost 29 attempts to scheduling churn.
